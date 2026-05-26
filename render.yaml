@@ -1,0 +1,53 @@
+services:
+  - type: web
+    name: urban-market-ja-api
+    runtime: node
+    rootDir: Backend
+    plan: starter
+    buildCommand: npm ci
+    preDeployCommand: npm run db:migrate
+    startCommand: npm start
+    healthCheckPath: /api/health
+    disk:
+      name: urban-market-ja-data
+      mountPath: /var/data/urban-market-ja
+      sizeGB: 1
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: NODE_VERSION
+        value: "22"
+      - key: USE_DATABASE
+        value: "true"
+      - key: FRONTEND_ORIGIN
+        sync: false
+      - key: DB_HOST
+        sync: false
+      - key: DB_PORT
+        sync: false
+      - key: DB_NAME
+        sync: false
+      - key: DB_USER
+        sync: false
+      - key: DB_PASSWORD
+        sync: false
+      - key: DB_SSL
+        value: "true"
+      - key: DB_SSL_REJECT_UNAUTHORIZED
+        value: "true"
+      - key: DB_SSL_CA_PATH
+        sync: false
+      - key: DB_SSL_CA
+        sync: false
+      - key: JWT_SECRET
+        generateValue: true
+      - key: PASSWORD_PEPPER
+        generateValue: true
+      - key: PAYMENT_PROVIDER
+        value: mock
+      - key: PAYMENT_WEBHOOK_SECRET
+        generateValue: true
+      - key: UPLOAD_DIR
+        value: /var/data/urban-market-ja/uploads/resumes
+      - key: COMPLIANCE_AUTOMATION_ENABLED
+        value: "true"

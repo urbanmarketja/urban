@@ -1,0 +1,47 @@
+# Dependencies
+node_modules/
+**/node_modules/
+
+# Environment and secrets
+.env
+.env.*
+**/.env
+**/.env.*
+!.env.example
+!**/.env.example
+
+# Build outputs and caches
+dist/
+**/dist/
+.angular/
+**/.angular/
+coverage/
+**/coverage/
+tmp/
+**/tmp/
+out-tsc/
+**/out-tsc/
+
+# Runtime uploads, backups, and logs
+Backend/logs/
+Backend/uploads/
+Backend/backups/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Local nested git backup kept when preparing the root deployment repo
+frontend/.git-local-backup*/
+
+# Editors and OS files
+.idea/
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+.history/
+.DS_Store
+Thumbs.db

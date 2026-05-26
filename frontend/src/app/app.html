@@ -1,0 +1,94 @@
+<header class="top-header">
+  <div class="container header-bar">
+    <a routerLink="/" class="brand-block">
+      <img class="brand-logo" src="/urban-market-ja-logo.svg" alt="Urban Market JA logo">
+      <span>
+        <strong>Urban Market JA</strong>
+        <small>The Market Square</small>
+      </span>
+    </a>
+
+    <nav class="main-nav" aria-label="Primary navigation">
+      <a routerLink="/" routerLinkActive="active" [routerLinkActiveOptions]="{ exact: true }"><span class="nav-icon">Home</span></a>
+      <a routerLink="/marketplace" routerLinkActive="active"><span class="nav-icon">Market</span></a>
+      <a routerLink="/jobs" routerLinkActive="active"><span class="nav-icon">Jobs</span></a>
+      <a routerLink="/cart" routerLinkActive="active"><span class="nav-icon">Cart</span><span class="nav-badge">{{ cart.count() }}</span></a>
+      @if (auth.currentUser()) {
+        <a routerLink="/alerts" routerLinkActive="active"><span class="nav-icon">Alerts</span></a>
+        <a [routerLink]="dashboardLink()" routerLinkActive="active"><span class="nav-icon">{{ dashboardLabel() }}</span></a>
+        <button class="nav-button" type="button" (click)="signOut()">Sign out</button>
+      } @else {
+        <a routerLink="/login" routerLinkActive="active"><span class="nav-icon">Sign in</span></a>
+      }
+    </nav>
+  </div>
+</header>
+
+<router-outlet />
+
+<footer class="footer">
+  <div class="container footer-shell">
+    <div class="footer-main">
+      <section class="footer-brand" aria-label="Urban Market JA summary">
+        <a routerLink="/" class="footer-logo-row">
+          <img class="footer-logo" src="/urban-market-ja-logo.svg" alt="Urban Market JA logo">
+          <span>
+            <strong>Urban Market JA</strong>
+            <small>The Market Square</small>
+          </span>
+        </a>
+        <p>Products, foods, services, jobs, vendor stores, subscriptions, and Market Credits for local commerce in Jamaica.</p>
+        <div class="footer-trust">
+          <span>Market Credits</span>
+          <span>Store maps</span>
+          <span>Vendor payouts</span>
+        </div>
+      </section>
+
+      <nav class="footer-column" aria-label="Shop">
+        <h3>Shop</h3>
+        <a routerLink="/marketplace">Marketplace</a>
+        <a routerLink="/foods">Foods</a>
+        <a routerLink="/services">Services</a>
+        <a routerLink="/jobs">Jobs</a>
+        <a routerLink="/cart">Cart</a>
+      </nav>
+
+      <nav class="footer-column" aria-label="Accounts">
+        <h3>Account</h3>
+        @if (auth.currentUser()) {
+          <a [routerLink]="dashboardLink()">{{ dashboardLabel() }}</a>
+          <a routerLink="/alerts">Alerts</a>
+          <button class="footer-link-button" type="button" (click)="signOut()">Sign out</button>
+        } @else {
+          <a routerLink="/login">Sign in</a>
+          <a routerLink="/signup">Create account</a>
+        }
+        <a routerLink="/checkout">Checkout</a>
+      </nav>
+
+      <nav class="footer-column" aria-label="Vendors and operations">
+        <h3>Vendors</h3>
+        <a routerLink="/signup">Start selling</a>
+        <a routerLink="/vendor-dashboard">Vendor dashboard</a>
+        <a routerLink="/dashboard-access">Dashboard access</a>
+        <a routerLink="/admin">Admin console</a>
+      </nav>
+
+      <section class="footer-column footer-support" aria-label="Support">
+        <h3>Support</h3>
+        <p>Customer orders, vendor registration assistance, subscriptions, payouts, and store visibility are handled through the platform dashboards.</p>
+        <a routerLink="/alerts">View alerts</a>
+        <a routerLink="/user-dashboard">Customer dashboard</a>
+      </section>
+    </div>
+
+    <div class="footer-bottom">
+      <p>2026 Urban Market JA. Marketplace operations for independent Jamaican sellers.</p>
+      <div class="footer-meta">
+        <span>Customer accounts are platform-level</span>
+        <span>Vendor funds release after receipt confirmation</span>
+      </div>
+    </div>
+  </div>
+</footer>

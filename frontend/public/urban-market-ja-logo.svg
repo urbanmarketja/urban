@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 420 320" role="img" aria-labelledby="title desc">
+  <title id="title">Urban Market JA logo</title>
+  <desc id="desc">Urban Market JA wordmark with city skyline and orange market accent.</desc>
+  <rect width="420" height="320" rx="18" fill="#f5dda6"/>
+  <g fill="#17313a">
+    <path d="M67 119h29V82l20-18 15 18v37h20V52l32-30 25 23v74h22V77l34-27 23 24v45h19V89h31l18 30h-25v16H67z"/>
+    <path d="M49 119c32-11 68-18 107-21 67-6 139 1 216 21-50-8-103-11-159-9-60 2-115 11-164 25z"/>
+    <path d="M61 148h48v25c0 12 8 20 21 20s21-8 21-20v-25h47v26c0 38-27 62-68 62s-69-24-69-62z"/>
+    <path d="M211 148h42l16 45 16-45h43v84h-31v-42l-16 42h-24l-16-42v42h-30z"/>
+    <path d="M37 245h70l19 29 19-29h70v49h-37v-23l-36 23h-32l-36-23v23H37z"/>
+    <path d="M224 245h65c28 0 44 10 44 27 0 16-16 24-44 24h-65zm39 18v15h21c8 0 12-3 12-8s-4-7-12-7z"/>
+  </g>
+  <path d="M40 139c54-16 112-24 174-24s119 8 171 24c-46-5-101-7-165-6-70 1-130 3-180 6z" fill="#f47a1f"/>
+  <g fill="#f47a1f">
+    <circle cx="278" cy="220" r="9"/>
+    <path d="M292 210h16l-8 14z"/>
+    <path d="M224 278h28v22h-28z"/>
+    <path d="M260 278h28v22h-28z"/>
+    <path d="M297 278h28v22h-28z"/>
+    <path d="M342 263h36v8h-36z"/>
+    <path d="M42 263h36v8H42z"/>
+  </g>
+  <g fill="#17313a">
+    <path d="M37 213h16v20c0 7-2 12-6 16-4 3-9 5-16 5-5 0-10-1-14-4l5-13c2 1 4 2 7 2 5 0 8-3 8-8z" transform="translate(319 10)"/>
+  </g>
+  <text x="210" y="205" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="55" font-weight="900" letter-spacing="1" fill="#17313a">URBAN</text>
+  <text x="210" y="268" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="55" font-weight="900" letter-spacing="1" fill="#17313a">MARKET</text>
+  <text x="210" y="304" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="34" font-weight="900" letter-spacing="1" fill="#f47a1f">JA</text>
+</svg>

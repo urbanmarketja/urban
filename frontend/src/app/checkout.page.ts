@@ -378,9 +378,9 @@ export class CheckoutPage implements OnInit {
   <style>
     body { margin: 0; padding: 32px; color: #1f2a24; font-family: Arial, sans-serif; background: #f7f4ed; }
     .invoice { max-width: 900px; margin: 0 auto; background: #fff; border: 1px solid #ded8ca; padding: 32px; }
-    .header { display: flex; justify-content: space-between; gap: 24px; align-items: flex-start; border-bottom: 3px solid #0f7a55; padding-bottom: 24px; }
+    .header { display: flex; justify-content: space-between; gap: 24px; align-items: flex-start; border-bottom: 3px solid #f47a1f; padding-bottom: 24px; }
     .brand { display: flex; gap: 14px; align-items: center; }
-    .logo { width: 58px; height: 58px; border-radius: 12px; background: #0f7a55; color: white; display: grid; place-items: center; font-weight: 800; font-size: 22px; letter-spacing: 0; }
+    .logo { width: 72px; height: 58px; border-radius: 10px; background: #f6e3b3; border: 1px solid #e2d4b6; object-fit: contain; padding: 3px; }
     h1, h2, p { margin: 0; }
     h1 { font-size: 28px; }
     h2 { font-size: 18px; margin-bottom: 12px; }
@@ -397,9 +397,9 @@ export class CheckoutPage implements OnInit {
     tfoot td { font-weight: 700; background: #fcfaf5; }
     .invoice-price { display: grid; gap: 2px; }
     .invoice-old-price { color: #7d7669; font-size: 12px; text-decoration: line-through; }
-    .invoice-sale-price { color: #0f7a55; font-weight: 800; }
+    .invoice-sale-price { color: #f47a1f; font-weight: 800; }
     .total { margin-top: 28px; display: flex; justify-content: flex-end; }
-    .total-box { min-width: 260px; border-top: 3px solid #0f7a55; padding-top: 14px; text-align: right; }
+    .total-box { min-width: 260px; border-top: 3px solid #f47a1f; padding-top: 14px; text-align: right; }
     .total-box strong { font-size: 24px; display: block; margin-top: 4px; }
     .footer { margin-top: 32px; color: #627267; font-size: 13px; border-top: 1px solid #e5dfd2; padding-top: 16px; }
     @media print { body { background: white; padding: 0; } .invoice { border: 0; } }
@@ -409,7 +409,7 @@ export class CheckoutPage implements OnInit {
   <main class="invoice">
     <header class="header">
       <div class="brand">
-        <div class="logo">UM</div>
+        <img class="logo" src="/logo.jpeg" alt="Urban Market JA logo">
         <div>
           <h1>Urban Market JA</h1>
           <p class="muted">The Market Square</p>

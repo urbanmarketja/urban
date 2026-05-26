@@ -313,7 +313,7 @@ function createInvoiceLines(order) {
 
   return [
     'Urban Market JA',
-    'Logo: UM',
+    'Logo: Urban Market JA logo',
     `Invoice number: ${order.invoiceNumber}`,
     `Order ID: ${order.orderId}`,
     `Date: ${order.createdAt}`,

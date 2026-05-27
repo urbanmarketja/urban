@@ -10,7 +10,17 @@ const FEATURE_PRODUCT_COST_COINS = 1500;
 const FEATURE_PRODUCT_DAYS = 7;
 const LARGE_HELD_BALANCE_CREDITS = 10000;
 const MAX_RESUME_BYTES = 5 * 1024 * 1024;
+const MAX_VENDOR_DOCUMENT_BYTES = 8 * 1024 * 1024;
 const RESUME_UPLOAD_DIR = config.uploadDir || path.join(__dirname, '..', 'uploads', 'resumes');
+const VENDOR_DOCUMENT_UPLOAD_DIR = path.join(path.dirname(RESUME_UPLOAD_DIR), 'vendor-documents');
+const VENDOR_DOCUMENT_TYPES = new Map([
+  ['application/pdf', ['.pdf']],
+  ['image/jpeg', ['.jpg', '.jpeg']],
+  ['image/png', ['.png']],
+  ['image/webp', ['.webp']],
+  ['application/msword', ['.doc']],
+  ['application/vnd.openxmlformats-officedocument.wordprocessingml.document', ['.docx']]
+]);
 
 function isDatabaseEnabled() {
   return config.useDatabase;
@@ -214,13 +224,69 @@ function coordinateOrNull(value, min, max) {
   return Number.isFinite(number) && number >= min && number <= max ? number : null;
 }
 
-function safeFileName(value) {
-  const cleaned = String(value || 'resume.pdf')
+function cleanFileName(value, fallback) {
+  return String(value || fallback)
     .replace(/[/\\?%*:|"<>]/g, '-')
     .replace(/\s+/g, '-')
     .replace(/[^a-zA-Z0-9._-]/g, '')
     .replace(/^-+|-+$/g, '');
+}
+
+function safeResumeFileName(value) {
+  const cleaned = cleanFileName(value, 'resume.pdf');
   return cleaned.toLowerCase().endsWith('.pdf') ? cleaned : `${cleaned || 'resume'}.pdf`;
+}
+
+function extensionForMimeType(mimeType) {
+  return VENDOR_DOCUMENT_TYPES.get(mimeType)?.[0] || '';
+}
+
+function safeDocumentFileName(value, mimeType) {
+  const fallback = `registration-document${extensionForMimeType(mimeType) || '.pdf'}`;
+  let cleaned = cleanFileName(value, fallback);
+  const lowerName = cleaned.toLowerCase();
+  const allowedExtensions = VENDOR_DOCUMENT_TYPES.get(mimeType) || [];
+  const hasAllowedExtension = allowedExtensions.some((extension) => lowerName.endsWith(extension));
+  if (!hasAllowedExtension) {
+    cleaned = `${cleaned || 'registration-document'}${allowedExtensions[0] || '.bin'}`;
+  }
+  return cleaned;
+}
+
+function looksLikeAllowedDocument(buffer, mimeType) {
+  if (mimeType === 'application/pdf') {
+    return buffer.subarray(0, 4).toString('utf8') === '%PDF';
+  }
+  if (mimeType === 'image/jpeg') {
+    return buffer.length >= 3 && buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff;
+  }
+  if (mimeType === 'image/png') {
+    return buffer.length >= 8
+      && buffer[0] === 0x89
+      && buffer[1] === 0x50
+      && buffer[2] === 0x4e
+      && buffer[3] === 0x47
+      && buffer[4] === 0x0d
+      && buffer[5] === 0x0a
+      && buffer[6] === 0x1a
+      && buffer[7] === 0x0a;
+  }
+  if (mimeType === 'image/webp') {
+    return buffer.length >= 12
+      && buffer.subarray(0, 4).toString('utf8') === 'RIFF'
+      && buffer.subarray(8, 12).toString('utf8') === 'WEBP';
+  }
+  if (mimeType === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document') {
+    return buffer.length >= 2 && buffer[0] === 0x50 && buffer[1] === 0x4b;
+  }
+  if (mimeType === 'application/msword') {
+    return buffer.length >= 4
+      && buffer[0] === 0xd0
+      && buffer[1] === 0xcf
+      && buffer[2] === 0x11
+      && buffer[3] === 0xe0;
+  }
+  return false;
 }
 
 async function saveResumeUpload(applicationId, body) {
@@ -228,7 +294,7 @@ async function saveResumeUpload(applicationId, body) {
     return null;
   }
 
-  const resumeName = safeFileName(body.resumeName);
+  const resumeName = safeResumeFileName(body.resumeName);
   const mimeType = String(body.resumeMimeType || 'application/pdf').toLowerCase();
   if (mimeType !== 'application/pdf' || !resumeName.toLowerCase().endsWith('.pdf')) {
     const error = new Error('Resume must be uploaded as a PDF file');
@@ -252,6 +318,50 @@ async function saveResumeUpload(applicationId, body) {
   const fileName = `${applicationId}-${resumeName}`;
   await fs.writeFile(path.join(RESUME_UPLOAD_DIR, fileName), buffer);
   return `uploads/resumes/${fileName}`;
+}
+
+async function saveVendorDocumentUpload(documentId, body) {
+  if (!body.documentDataBase64) {
+    return body.fileUrl || body.url || null;
+  }
+
+  const mimeType = String(body.documentMimeType || '').toLowerCase();
+  if (!VENDOR_DOCUMENT_TYPES.has(mimeType)) {
+    const error = new Error('Upload a PDF, image, Word document, or DOCX file');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const buffer = Buffer.from(String(body.documentDataBase64), 'base64');
+  if (!buffer.length || buffer.length > MAX_VENDOR_DOCUMENT_BYTES) {
+    const error = new Error('Registration document must be 8 MB or smaller');
+    error.statusCode = 400;
+    throw error;
+  }
+  if (!looksLikeAllowedDocument(buffer, mimeType)) {
+    const error = new Error('Uploaded registration document does not match the selected file type');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  await fs.mkdir(VENDOR_DOCUMENT_UPLOAD_DIR, { recursive: true });
+  const documentName = safeDocumentFileName(body.documentName, mimeType);
+  const fileName = `${documentId}-${documentName}`;
+  await fs.writeFile(path.join(VENDOR_DOCUMENT_UPLOAD_DIR, fileName), buffer);
+  return `uploads/vendor-documents/${fileName}`;
+}
+
+function contentTypeForDocument(fileName) {
+  const extension = path.extname(String(fileName || '')).toLowerCase();
+  return {
+    '.doc': 'application/msword',
+    '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    '.jpeg': 'image/jpeg',
+    '.jpg': 'image/jpeg',
+    '.pdf': 'application/pdf',
+    '.png': 'image/png',
+    '.webp': 'image/webp'
+  }[extension] || 'application/octet-stream';
 }
 
 async function listVendors(activeOnly = true, registeredOnly = false) {
@@ -2844,6 +2954,37 @@ async function vendorIdForDocument(documentId) {
   return rows[0]?.vendorId || null;
 }
 
+async function findVendorDocumentById(documentId) {
+  const rows = await query(`
+    SELECT id, vendor_id AS vendorId, document_type AS documentType, file_url AS fileUrl, status, reviewed_at AS reviewedAt
+    FROM vendor_documents
+    WHERE id = :documentId
+    LIMIT 1
+  `, { documentId });
+  return rows[0] || null;
+}
+
+async function vendorDocumentDownload(documentId) {
+  const document = await findVendorDocumentById(documentId);
+  if (!document || !document.fileUrl || /^https?:\/\//i.test(document.fileUrl)) {
+    return null;
+  }
+
+  const fileName = path.basename(document.fileUrl);
+  const filePath = path.resolve(VENDOR_DOCUMENT_UPLOAD_DIR, fileName);
+  const uploadRoot = path.resolve(VENDOR_DOCUMENT_UPLOAD_DIR);
+  if (!filePath.startsWith(`${uploadRoot}${path.sep}`)) {
+    return null;
+  }
+
+  return {
+    ...document,
+    fileName,
+    filePath,
+    contentType: contentTypeForDocument(fileName)
+  };
+}
+
 async function storeByVendorId(vendorId) {
   const rows = await query(`
     SELECT
@@ -4920,6 +5061,12 @@ async function updateRegistrationRequest(requestId, body, adminUserId) {
 
 async function createVendorDocument(body, uploadedByUserId) {
   const id = randomUUID();
+  const fileUrl = await saveVendorDocumentUpload(id, body);
+  if (!fileUrl) {
+    const error = new Error('Upload a registration document file before submitting');
+    error.statusCode = 400;
+    throw error;
+  }
   await query(`
     INSERT INTO vendor_documents (id, vendor_id, uploaded_by_user_id, document_type, file_url)
     VALUES (:id, :vendorId, :uploadedByUserId, :documentType, :fileUrl)
@@ -4928,9 +5075,9 @@ async function createVendorDocument(body, uploadedByUserId) {
     vendorId: body.vendorId,
     uploadedByUserId,
     documentType: body.documentType || 'Business registration document',
-    fileUrl: body.fileUrl || body.url
+    fileUrl
   });
-  return { id, vendorId: body.vendorId, documentType: body.documentType || 'Business registration document', fileUrl: body.fileUrl || body.url, status: 'pending' };
+  return { id, vendorId: body.vendorId, documentType: body.documentType || 'Business registration document', fileUrl, status: 'pending' };
 }
 
 async function reviewVendorDocument(documentId, body, adminUserId) {
@@ -5421,6 +5568,7 @@ module.exports = {
   findJobById,
   findOrderById,
   findBookingById,
+  findVendorDocumentById,
   findPublicJobById,
   findPaymentSessionById,
   findServiceById,
@@ -5499,5 +5647,6 @@ module.exports = {
   vendorIdForProduct,
   vendorIdForService,
   vendorIdForStore,
+  vendorDocumentDownload,
   vendorIdsForUser
 };

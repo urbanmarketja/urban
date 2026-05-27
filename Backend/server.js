@@ -1,4 +1,5 @@
 const http = require('http');
+const fs = require('fs/promises');
 const config = require('./config');
 const { getAuthUser, hashPassword, requireRoles, safeUser, signToken, verifyPassword } = require('./auth');
 const { databaseMode } = require('./db/mysql');
@@ -208,6 +209,17 @@ function sendJson(res, statusCode, payload) {
 }
 
 function sendText(res, statusCode, body, contentType, headers = {}) {
+  res.writeHead(statusCode, {
+    'Access-Control-Allow-Origin': frontendOrigin,
+    'Access-Control-Allow-Methods': 'GET,POST,DELETE,OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Urban-Market-Signature',
+    'Content-Type': contentType,
+    ...headers
+  });
+  res.end(body);
+}
+
+function sendBinary(res, statusCode, body, contentType, headers = {}) {
   res.writeHead(statusCode, {
     'Access-Control-Allow-Origin': frontendOrigin,
     'Access-Control-Allow-Methods': 'GET,POST,DELETE,OPTIONS',
@@ -1949,7 +1961,7 @@ const server = http.createServer(async (req, res) => {
     const authUser = requireRouteRoles(req, res, ['vendor', 'admin']);
     if (!authUser) return;
     if (repository.isDatabaseEnabled()) {
-      readJsonBody(req)
+      readJsonBody(req, 12000000)
         .then(async (body) => {
           if (!await authorizeVendorTarget(authUser, body.vendorId)) {
             sendJson(res, 403, { error: 'Vendor account cannot manage this document' });
@@ -1962,6 +1974,39 @@ const server = http.createServer(async (req, res) => {
       return;
     }
     sendJson(res, 201, { ok: true });
+    return;
+  }
+
+  const documentDownloadMatch = url.pathname.match(/^\/api\/vendor-documents\/([^/]+)\/download$/);
+  if (req.method === 'GET' && documentDownloadMatch) {
+    const authUser = requireRouteRoles(req, res, ['vendor', 'admin']);
+    if (!authUser) return;
+    if (repository.isDatabaseEnabled()) {
+      try {
+        const document = await repository.findVendorDocumentById(documentDownloadMatch[1]);
+        if (!document) {
+          sendJson(res, 404, { error: 'Document not found' });
+          return;
+        }
+        if (!await authorizeVendorTarget(authUser, document.vendorId)) {
+          sendJson(res, 403, { error: 'This account cannot access this document' });
+          return;
+        }
+        const download = await repository.vendorDocumentDownload(documentDownloadMatch[1]);
+        if (!download) {
+          sendJson(res, 404, { error: 'Uploaded document file is not available' });
+          return;
+        }
+        const file = await fs.readFile(download.filePath);
+        sendBinary(res, 200, file, download.contentType, {
+          'Content-Disposition': `attachment; filename="${download.fileName.replace(/"/g, '')}"`
+        });
+      } catch (error) {
+        sendJson(res, error.statusCode || 400, { error: error.message || 'Document could not be downloaded' });
+      }
+      return;
+    }
+    sendJson(res, 404, { error: 'Document download requires database mode' });
     return;
   }
 

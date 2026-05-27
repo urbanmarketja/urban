@@ -480,8 +480,9 @@ interface AdminAuditLogRow {
                       <td>{{ document.vendor }}</td>
                       <td>{{ document.documentType }}</td>
                       <td><span class="status-pill" [class.warn]="document.status !== 'approved'">{{ document.status }}</span></td>
-                      <td class="truncate-cell">{{ document.fileUrl }}</td>
+                      <td class="truncate-cell">{{ documentName(document) }}</td>
                       <td class="action-cell">
+                        <button class="button-sm" type="button" (click)="downloadDocument(document)">Download</button>
                         @if (document.status !== 'approved') {
                           <button class="button-sm" type="button" (click)="reviewDocument(document.id, 'approved')">Approve</button>
                         }
@@ -1038,6 +1039,36 @@ export class AdminPage implements OnInit {
 
   protected async reviewDocument(id: string, status: string): Promise<void> {
     await this.post(`/api/vendor-documents/${id}/review`, { status }, 'Document review saved.');
+  }
+
+  protected documentName(documentRecord: any): string {
+    const fileUrl = String(documentRecord.fileUrl || '');
+    return fileUrl.split('/').pop() || fileUrl || 'Uploaded file';
+  }
+
+  protected async downloadDocument(documentRecord: any): Promise<void> {
+    try {
+      if (/^https?:\/\//i.test(String(documentRecord.fileUrl || ''))) {
+        window.open(documentRecord.fileUrl, '_blank', 'noopener');
+        return;
+      }
+      const response = await fetch(apiUrl(`/api/vendor-documents/${documentRecord.id}/download`), {
+        headers: this.auth.authHeaders()
+      });
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({}));
+        throw new Error(payload.error || 'Document download failed.');
+      }
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = this.documentName(documentRecord);
+      link.click();
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      this.message.set(error instanceof Error ? error.message : 'Document download failed.');
+    }
   }
 
   protected async updateCheckoutRequest(id: string, status: string): Promise<void> {

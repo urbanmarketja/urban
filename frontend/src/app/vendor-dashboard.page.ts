@@ -652,14 +652,19 @@ interface VendorRecord {
                 <form class="profile-form" (ngSubmit)="uploadDocument()">
                   <h2>Registration Documents</h2>
                   <label>Document type <input name="documentType" [(ngModel)]="documentForm.documentType" placeholder="Business registration document"></label>
-                  <label>Document URL <input name="documentUrl" [(ngModel)]="documentForm.fileUrl" placeholder="https://..."></label>
-                  <button class="button primary-button" type="submit">Upload document</button>
+                  <label>Document file <input id="vendorDocumentFile" name="documentFile" type="file" accept=".pdf,.jpg,.jpeg,.png,.webp,.doc,.docx,application/pdf,image/jpeg,image/png,image/webp,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document" (change)="selectDocumentFile($event)"></label>
+                  <p class="product-meta">{{ documentFileLabel() }}</p>
+                  <button class="button primary-button" type="submit" [disabled]="!documentForm.documentDataBase64">Upload document</button>
                 </form>
 
                 <article class="dashboard-card">
                   <h2>Uploaded documents</h2>
                   @for (document of vendorDocuments(); track document.id) {
-                    <p><strong>{{ document.documentType }}</strong><br>{{ document.status }} - {{ document.fileUrl }}</p>
+                    <p>
+                      <strong>{{ document.documentType }}</strong><br>
+                      {{ document.status }} - {{ documentName(document) }}
+                    </p>
+                    <button class="button-sm" type="button" (click)="downloadDocument(document)">Download</button>
                   } @empty {
                     <p>No documents uploaded yet.</p>
                   }
@@ -767,7 +772,7 @@ export class VendorDashboardPage implements OnInit {
   protected listingForm = { type: 'product', name: '', price: null as number | null, stockQuantity: null as number | null, deliveryDay: '', status: 'draft', description: '' };
   protected serviceForm = { name: '', category: '', price: null as number | null, pricingType: 'Fixed', status: 'draft', description: '' };
   protected mediaForm = { mediaType: 'gallery', url: '' };
-  protected documentForm = { documentType: 'Business registration document', fileUrl: '' };
+  protected documentForm = { documentType: 'Business registration document', documentName: '', documentMimeType: '', documentSizeBytes: 0, documentDataBase64: '' };
   protected discountForm = { name: '', code: '', discountType: 'percent', amount: null as number | null };
   protected payoutForm = { payoutMethod: 'bank_transfer', payoutDetails: '' };
   protected checkoutForm = { amountCoins: null as number | null, payoutMethod: 'bank_transfer', payoutDetails: '' };
@@ -826,7 +831,7 @@ export class VendorDashboardPage implements OnInit {
       };
     }
     this.mediaForm = { mediaType: 'gallery', url: '' };
-    this.documentForm = { ...this.documentForm, fileUrl: '' };
+    this.resetDocumentForm();
     this.selectedCheckoutRequestId.set('');
     this.syncPayoutFormFromProfile();
   }
@@ -1061,7 +1066,97 @@ export class VendorDashboardPage implements OnInit {
 
   protected async uploadDocument(): Promise<void> {
     await this.post('/api/vendor-documents', { ...this.documentForm, vendorId: this.selectedVendorId }, 'Registration document uploaded for admin review.');
-    this.documentForm = { documentType: 'Business registration document', fileUrl: '' };
+    this.resetDocumentForm();
+    const input = typeof document !== 'undefined' ? document.getElementById('vendorDocumentFile') as HTMLInputElement | null : null;
+    if (input) input.value = '';
+  }
+
+  protected selectDocumentFile(event: Event): void {
+    const input = event.target as HTMLInputElement;
+    const file = input.files?.[0];
+    this.documentForm = {
+      ...this.documentForm,
+      documentName: '',
+      documentMimeType: '',
+      documentSizeBytes: 0,
+      documentDataBase64: ''
+    };
+    if (!file) return;
+
+    const allowedTypes = [
+      'application/msword',
+      'application/pdf',
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      'image/jpeg',
+      'image/png',
+      'image/webp'
+    ];
+    const allowedExtensions = ['.doc', '.docx', '.jpeg', '.jpg', '.pdf', '.png', '.webp'];
+    const lowerName = file.name.toLowerCase();
+    if (!allowedTypes.includes(file.type) && !allowedExtensions.some((extension) => lowerName.endsWith(extension))) {
+      this.message.set('Upload a PDF, image, Word document, or DOCX file.');
+      input.value = '';
+      return;
+    }
+    if (file.size > 8 * 1024 * 1024) {
+      this.message.set('Registration document must be 8 MB or smaller.');
+      input.value = '';
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      const value = String(reader.result || '');
+      this.documentForm = {
+        ...this.documentForm,
+        documentName: file.name,
+        documentMimeType: file.type || this.mimeTypeFromFileName(file.name),
+        documentSizeBytes: file.size,
+        documentDataBase64: value.includes(',') ? value.split(',')[1] : value
+      };
+    };
+    reader.onerror = () => {
+      this.message.set('Document could not be read. Try selecting it again.');
+      input.value = '';
+    };
+    reader.readAsDataURL(file);
+  }
+
+  protected documentFileLabel(): string {
+    if (!this.documentForm.documentName) return 'PDF, image, Word, or DOCX file up to 8 MB.';
+    const kb = this.documentForm.documentSizeBytes / 1024;
+    const size = kb >= 1024 ? `${(kb / 1024).toFixed(1)} MB` : `${Math.round(kb)} KB`;
+    return `${this.documentForm.documentName} selected (${size})`;
+  }
+
+  protected documentName(documentRecord: any): string {
+    const fileUrl = String(documentRecord.fileUrl || '');
+    return fileUrl.split('/').pop() || fileUrl || 'Uploaded file';
+  }
+
+  protected async downloadDocument(documentRecord: any): Promise<void> {
+    try {
+      if (/^https?:\/\//i.test(String(documentRecord.fileUrl || ''))) {
+        window.open(documentRecord.fileUrl, '_blank', 'noopener');
+        return;
+      }
+      const response = await fetch(apiUrl(`/api/vendor-documents/${documentRecord.id}/download`), {
+        headers: this.auth.authHeaders()
+      });
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({}));
+        throw new Error(payload.error || 'Document download failed.');
+      }
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = this.documentName(documentRecord);
+      link.click();
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      this.message.set(error instanceof Error ? error.message : 'Document download failed.');
+    }
   }
 
   protected async requestAssistance(): Promise<void> {
@@ -1260,6 +1355,29 @@ export class VendorDashboardPage implements OnInit {
         payoutDetails: this.payoutForm.payoutDetails
       };
     }
+  }
+
+  private resetDocumentForm(): void {
+    this.documentForm = {
+      documentType: this.documentForm.documentType || 'Business registration document',
+      documentName: '',
+      documentMimeType: '',
+      documentSizeBytes: 0,
+      documentDataBase64: ''
+    };
+  }
+
+  private mimeTypeFromFileName(name: string): string {
+    const extension = name.toLowerCase().split('.').pop();
+    return {
+      doc: 'application/msword',
+      docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      jpeg: 'image/jpeg',
+      jpg: 'image/jpeg',
+      pdf: 'application/pdf',
+      png: 'image/png',
+      webp: 'image/webp'
+    }[extension || ''] || 'application/octet-stream';
   }
 
   private async post(path: string, body: unknown, successMessage: string): Promise<void> {

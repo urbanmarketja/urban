@@ -652,7 +652,12 @@ interface VendorRecord {
                 <form class="profile-form" (ngSubmit)="uploadDocument()">
                   <h2>Registration Documents</h2>
                   <label>Document type <input name="documentType" [(ngModel)]="documentForm.documentType" placeholder="Business registration document"></label>
-                  <label>Document file <input id="vendorDocumentFile" name="documentFile" type="file" accept=".pdf,.jpg,.jpeg,.png,.webp,.doc,.docx,application/pdf,image/jpeg,image/png,image/webp,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document" (change)="selectDocumentFile($event)"></label>
+                  <div class="document-upload-actions">
+                    <label class="button secondary-button file-choice-button" for="vendorDocumentImageFile">Choose image</label>
+                    <input id="vendorDocumentImageFile" class="visually-hidden-file" name="documentImageFile" type="file" accept="image/*,.heic,.heif,image/heic,image/heif" (change)="selectDocumentFile($event)">
+                    <label class="button outline-button file-choice-button" for="vendorDocumentFile">Choose file</label>
+                    <input id="vendorDocumentFile" class="visually-hidden-file" name="documentFile" type="file" accept=".pdf,.doc,.docx,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document" (change)="selectDocumentFile($event)">
+                  </div>
                   <p class="product-meta">{{ documentFileLabel() }}</p>
                   <button class="button primary-button" type="submit" [disabled]="!documentForm.documentDataBase64">Upload document</button>
                 </form>
@@ -1067,8 +1072,7 @@ export class VendorDashboardPage implements OnInit {
   protected async uploadDocument(): Promise<void> {
     await this.post('/api/vendor-documents', { ...this.documentForm, vendorId: this.selectedVendorId }, 'Registration document uploaded for admin review.');
     this.resetDocumentForm();
-    const input = typeof document !== 'undefined' ? document.getElementById('vendorDocumentFile') as HTMLInputElement | null : null;
-    if (input) input.value = '';
+    this.resetDocumentInputs();
   }
 
   protected selectDocumentFile(event: Event): void {
@@ -1087,11 +1091,13 @@ export class VendorDashboardPage implements OnInit {
       'application/msword',
       'application/pdf',
       'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      'image/heic',
+      'image/heif',
       'image/jpeg',
       'image/png',
       'image/webp'
     ];
-    const allowedExtensions = ['.doc', '.docx', '.jpeg', '.jpg', '.pdf', '.png', '.webp'];
+    const allowedExtensions = ['.doc', '.docx', '.heic', '.heif', '.jpeg', '.jpg', '.pdf', '.png', '.webp'];
     const lowerName = file.name.toLowerCase();
     if (!allowedTypes.includes(file.type) && !allowedExtensions.some((extension) => lowerName.endsWith(extension))) {
       this.message.set('Upload a PDF, image, Word document, or DOCX file.');
@@ -1367,11 +1373,21 @@ export class VendorDashboardPage implements OnInit {
     };
   }
 
+  private resetDocumentInputs(): void {
+    if (typeof document === 'undefined') return;
+    for (const id of ['vendorDocumentFile', 'vendorDocumentImageFile']) {
+      const input = document.getElementById(id) as HTMLInputElement | null;
+      if (input) input.value = '';
+    }
+  }
+
   private mimeTypeFromFileName(name: string): string {
     const extension = name.toLowerCase().split('.').pop();
     return {
       doc: 'application/msword',
       docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      heic: 'image/heic',
+      heif: 'image/heif',
       jpeg: 'image/jpeg',
       jpg: 'image/jpeg',
       pdf: 'application/pdf',

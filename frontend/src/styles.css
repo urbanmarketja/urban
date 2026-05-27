@@ -2815,6 +2815,27 @@ textarea:hover {
   color: #fff3df;
 }
 
+.document-upload-actions {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.file-choice-button {
+  cursor: pointer;
+  justify-content: center;
+  min-height: 44px;
+}
+
+.visually-hidden-file {
+  height: 1px;
+  opacity: 0;
+  overflow: hidden;
+  position: absolute;
+  width: 1px;
+}
+
 @media (max-width: 860px) {
   .brand-logo {
     height: 52px;
@@ -2823,5 +2844,10 @@ textarea:hover {
 
   .brand-block {
     min-width: 0;
+  }
+
+  .document-upload-actions {
+    align-items: stretch;
+    flex-direction: column;
   }
 }

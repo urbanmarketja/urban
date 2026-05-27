@@ -15,6 +15,8 @@ const RESUME_UPLOAD_DIR = config.uploadDir || path.join(__dirname, '..', 'upload
 const VENDOR_DOCUMENT_UPLOAD_DIR = path.join(path.dirname(RESUME_UPLOAD_DIR), 'vendor-documents');
 const VENDOR_DOCUMENT_TYPES = new Map([
   ['application/pdf', ['.pdf']],
+  ['image/heic', ['.heic']],
+  ['image/heif', ['.heif']],
   ['image/jpeg', ['.jpg', '.jpeg']],
   ['image/png', ['.png']],
   ['image/webp', ['.webp']],
@@ -276,6 +278,9 @@ function looksLikeAllowedDocument(buffer, mimeType) {
       && buffer.subarray(0, 4).toString('utf8') === 'RIFF'
       && buffer.subarray(8, 12).toString('utf8') === 'WEBP';
   }
+  if (mimeType === 'image/heic' || mimeType === 'image/heif') {
+    return buffer.length >= 12 && buffer.subarray(4, 8).toString('utf8') === 'ftyp';
+  }
   if (mimeType === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document') {
     return buffer.length >= 2 && buffer[0] === 0x50 && buffer[1] === 0x4b;
   }
@@ -356,6 +361,8 @@ function contentTypeForDocument(fileName) {
   return {
     '.doc': 'application/msword',
     '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    '.heic': 'image/heic',
+    '.heif': 'image/heif',
     '.jpeg': 'image/jpeg',
     '.jpg': 'image/jpeg',
     '.pdf': 'application/pdf',

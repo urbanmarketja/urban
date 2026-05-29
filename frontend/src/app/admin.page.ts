@@ -332,9 +332,11 @@ interface AdminAuditLogRow {
                       </td>
                       <td>
                         <div class="admin-inline-control">
-                          <select [ngModel]="vendorPlanSelection(vendor)" (ngModelChange)="setVendorPlanSelection(vendor.id, $event)">
+                          <select [ngModel]="vendorPlanSelection(vendor)" (ngModelChange)="setVendorPlanSelection(vendor.id, $event)" [disabled]="!plans().length">
                             @for (plan of plans(); track plan.id) {
                               <option [value]="plan.id">{{ plan.name }}</option>
+                            } @empty {
+                              <option value="">No plans configured</option>
                             }
                           </select>
                           <select [ngModel]="vendorSubscriptionStatusSelection(vendor)" (ngModelChange)="setVendorSubscriptionStatusSelection(vendor.id, $event)">
@@ -342,7 +344,7 @@ interface AdminAuditLogRow {
                               <option [value]="status">{{ status }}</option>
                             }
                           </select>
-                          <button class="button-sm" type="button" (click)="updateVendorPlan(vendor.id)">Apply</button>
+                          <button class="button-sm" type="button" [disabled]="!canUpdateVendorPlan(vendor)" (click)="updateVendorPlan(vendor.id)">Apply</button>
                         </div>
                       </td>
                       <td class="action-cell">
@@ -1077,9 +1079,10 @@ export class AdminPage implements OnInit {
   }
 
   protected vendorPlanSelection(vendor: AdminVendor): string {
-    return this.vendorPlanDrafts[vendor.id]
-      || vendor.subscriptionPlanCode
-      || vendor.subscriptionPlanId
+    const draft = this.vendorPlanDrafts[vendor.id];
+    return this.planIdFromValue(draft)
+      || this.planIdFromValue(vendor.subscriptionPlanCode)
+      || this.planIdFromValue(vendor.subscriptionPlanId)
       || this.planIdFromName(vendor.subscriptionPlan)
       || this.plans()[0]?.id
       || '';
@@ -1087,6 +1090,10 @@ export class AdminPage implements OnInit {
 
   protected setVendorPlanSelection(vendorId: string, planId: string): void {
     this.vendorPlanDrafts = { ...this.vendorPlanDrafts, [vendorId]: planId };
+  }
+
+  protected canUpdateVendorPlan(vendor: AdminVendor): boolean {
+    return Boolean(this.vendorPlanSelection(vendor));
   }
 
   protected vendorSubscriptionStatusSelection(vendor: AdminVendor): string {
@@ -1103,8 +1110,9 @@ export class AdminPage implements OnInit {
     const vendor = this.adminVendors().find((item) => item.id === id);
     const planId = vendor ? this.vendorPlanSelection(vendor) : this.plans()[0]?.id;
     const status = vendor ? this.vendorSubscriptionStatusSelection(vendor) : 'active';
-    if (!planId) {
-      this.message.set('Subscription plans are not loaded yet.');
+    const plan = this.plans().find((item) => item.id === planId);
+    if (!plan) {
+      this.message.set('No valid subscription plans are configured. Add starter, growth, and pro plans in the database first.');
       return;
     }
     await this.post(`/api/vendors/${id}/subscription`, { planId, status }, 'Vendor subscription updated.');
@@ -1225,6 +1233,11 @@ export class AdminPage implements OnInit {
 
   private planIdFromName(name?: string): string {
     return this.plans().find((plan) => plan.name === name)?.id || '';
+  }
+
+  private planIdFromValue(value?: string | null): string {
+    if (!value) return '';
+    return this.plans().find((plan) => plan.id === value || plan.name === value)?.id || '';
   }
 
   private matches(fields: Array<string | number | undefined | null>): boolean {

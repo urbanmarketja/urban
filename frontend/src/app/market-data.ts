@@ -481,6 +481,10 @@ export function complianceSeverity(vendor: Vendor): ComplianceSeverity {
     return 'critical';
   }
 
+  if (vendor.subscriptionStatus !== 'active' || isStarterPlan(vendor)) {
+    return 'notice';
+  }
+
   if (vendor.registrationStatus === 'unregistered') {
     const daysLeft = daysUntilExpiry(vendor);
     if (daysLeft < 0) {
@@ -498,6 +502,14 @@ export function complianceSeverity(vendor: Vendor): ComplianceSeverity {
 export function complianceMessage(vendor: Vendor): string {
   if (vendor.subscriptionStatus === 'past_due') {
     return 'Subscription is past due. Product publishing should be paused until payment is restored.';
+  }
+
+  if (vendor.subscriptionStatus !== 'active') {
+    return 'Subscription must be active before this store and its listings can appear publicly.';
+  }
+
+  if (isStarterPlan(vendor)) {
+    return 'Starter plan is for private setup only. Select an active Growth or Pro plan before this store can appear publicly.';
   }
 
   if (vendor.registrationStatus === 'unregistered') {

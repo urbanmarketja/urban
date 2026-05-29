@@ -126,16 +126,29 @@ function daysUntilExpiry(vendor) {
   return Math.ceil((unregisteredExpiry(vendor).getTime() - Date.now()) / 86400000);
 }
 
+function isStarterPlan(vendor) {
+  const plan = String(vendor?.subscriptionPlanCode || vendor?.subscriptionPlan || '').toLowerCase();
+  return plan === 'starter' || plan.includes('starter');
+}
+
 function complianceAlertFor(vendor) {
   const isRegistered = vendor.registrationStatus === 'registered';
+  const hasActiveSubscription = vendor.subscriptionStatus === 'active';
+  const hasPublicPlan = !isStarterPlan(vendor);
   const daysRemaining = isRegistered ? null : daysUntilExpiry(vendor);
-  const canPublishProducts = vendor.subscriptionStatus === 'active' && isRegistered;
+  const canPublishProducts = hasActiveSubscription && isRegistered && hasPublicPlan;
   let severity = 'ok';
   let message = 'Vendor is compliant.';
 
   if (vendor.subscriptionStatus === 'past_due') {
     severity = 'critical';
     message = 'Subscription is past due. Product publishing is paused until payment is restored.';
+  } else if (!hasActiveSubscription) {
+    severity = 'notice';
+    message = 'Subscription must be active before this store and its listings can appear publicly.';
+  } else if (!hasPublicPlan) {
+    severity = 'notice';
+    message = 'Starter plan is for private setup only. Select an active Growth or Pro plan before this store can appear publicly.';
   } else if (!isRegistered) {
     severity = daysRemaining <= 7 ? 'critical' : daysRemaining <= 90 ? 'warning' : 'notice';
     message = daysRemaining < 0
@@ -149,8 +162,13 @@ function complianceAlertFor(vendor) {
     severity,
     message,
     canPublishProducts,
-    eligibility: isRegistered
-      ? { canSell: true, reason: 'registered_business' }
+    eligibility: canPublishProducts
+      ? { canSell: true, reason: 'registered_business_active_public_plan' }
+      : isRegistered
+        ? {
+            canSell: false,
+            reason: hasActiveSubscription ? 'public_subscription_plan_required' : 'active_subscription_required'
+          }
       : {
           canSell: false,
           reason: 'registration_required_for_public_listing',
@@ -208,7 +226,8 @@ function registrationAutomationAlert(vendor) {
 function canVendorPublish(vendor) {
   return !!vendor
     && vendor.subscriptionStatus === 'active'
-    && vendor.registrationStatus === 'registered';
+    && vendor.registrationStatus === 'registered'
+    && !isStarterPlan(vendor);
 }
 
 function assertPublishAllowed(vendor, action = 'publish') {
@@ -995,8 +1014,14 @@ async function updateVendorSubscription(vendorId, body) {
   const plan = planRows[0];
   const status = ['trial', 'active', 'past_due', 'cancelled'].includes(body.status) ? body.status : 'active';
 
-  if (!vendor || !plan) {
-    const error = new Error('Vendor subscription update requires a valid vendor and plan');
+  if (!vendor) {
+    const error = new Error('Vendor subscription update requires a valid vendor');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  if (!plan) {
+    const error = new Error('Subscription plan not found. Confirm subscription_plans contains starter, growth, and pro rows.');
     error.statusCode = 400;
     throw error;
   }

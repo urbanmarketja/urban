@@ -32,6 +32,7 @@ interface VendorRecord {
   onboardedAt: string;
   subscriptionStatus: string;
   subscriptionPlan: string;
+  subscriptionPlanCode?: string;
   nextBillingAt?: string;
 }
 
@@ -1492,6 +1493,12 @@ export class VendorDashboardPage implements OnInit {
     if (vendor.subscriptionStatus === 'past_due') {
       return 'Subscription is past due. Product publishing is paused until payment is restored.';
     }
+    if (vendor.subscriptionStatus !== 'active') {
+      return 'Subscription must be active before this store and its listings can appear publicly.';
+    }
+    if (this.isStarterPlan(vendor)) {
+      return 'Starter plan is for private setup only. Select an active Growth or Pro plan before this store can appear publicly.';
+    }
     if (vendor.registrationStatus === 'registered') {
       return 'Vendor is compliant.';
     }
@@ -1504,13 +1511,22 @@ export class VendorDashboardPage implements OnInit {
   protected severity(vendor: VendorRecord | null): string {
     if (!vendor) return 'notice';
     if (vendor.subscriptionStatus === 'past_due') return 'critical';
+    if (vendor.subscriptionStatus !== 'active' || this.isStarterPlan(vendor)) return 'notice';
     if (vendor.registrationStatus === 'registered') return 'ok';
     const daysRemaining = this.daysLeft(vendor);
     return daysRemaining <= 7 ? 'critical' : daysRemaining <= 90 ? 'warning' : 'notice';
   }
 
   protected canPublish(vendor: VendorRecord | null): boolean {
-    return !!vendor && vendor.subscriptionStatus === 'active' && vendor.registrationStatus === 'registered';
+    return !!vendor
+      && vendor.subscriptionStatus === 'active'
+      && vendor.registrationStatus === 'registered'
+      && !this.isStarterPlan(vendor);
+  }
+
+  private isStarterPlan(vendor: VendorRecord | null): boolean {
+    const plan = String(vendor?.subscriptionPlanCode || vendor?.subscriptionPlan || '').toLowerCase();
+    return plan === 'starter' || plan.includes('starter');
   }
 
   private unregisteredExpiry(vendor: VendorRecord): Date {

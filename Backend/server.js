@@ -153,6 +153,10 @@ function complianceSeverity(vendor) {
     return 'critical';
   }
 
+  if (vendor.subscriptionStatus !== 'active' || isStarterPlan(vendor)) {
+    return 'notice';
+  }
+
   if (vendor.registrationStatus === 'unregistered') {
     const daysRemaining = vendorEligibility(vendor).daysRemaining;
     if (daysRemaining < 0 || daysRemaining <= 7) {
@@ -172,6 +176,14 @@ function complianceMessage(vendor) {
     return 'Subscription is past due. Product publishing is paused until payment is restored.';
   }
 
+  if (vendor.subscriptionStatus !== 'active') {
+    return 'Subscription must be active before this store and its listings can appear publicly.';
+  }
+
+  if (isStarterPlan(vendor)) {
+    return 'Starter plan is for private setup only. Select an active Growth or Pro plan before this store can appear publicly.';
+  }
+
   if (vendor.registrationStatus === 'unregistered') {
     const daysRemaining = vendorEligibility(vendor).daysRemaining;
     if (daysRemaining < 0) {
@@ -184,7 +196,9 @@ function complianceMessage(vendor) {
 }
 
 function canPublishProducts(vendor) {
-  return vendor.subscriptionStatus === 'active' && vendor.registrationStatus === 'registered';
+  return vendor.subscriptionStatus === 'active'
+    && vendor.registrationStatus === 'registered'
+    && !isStarterPlan(vendor);
 }
 
 function isStarterPlan(vendor) {

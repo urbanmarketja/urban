@@ -136,7 +136,8 @@ export class MarketApiService {
       rating: Number(product.rating || 4.8),
       deliveryDay: product.deliveryDay || 'Available',
       description: product.description || 'Available from a local Urban Market JA vendor.',
-      stockQuantity: Number(product.stockQuantity ?? 0)
+      stockQuantity: Number(product.stockQuantity ?? 0),
+      imageUrl: this.mediaUrl(product.imageUrl)
     };
   }
 
@@ -146,6 +147,7 @@ export class MarketApiService {
       rating: Number(service.rating || 4.8),
       price: Number(service.price || 0),
       pricingType: service.pricingType || 'Fixed',
+      imageUrl: this.mediaUrl(service.imageUrl),
       reviews: service.reviews || [],
       details: service.details || service.description || 'Service details will be confirmed during booking.'
     };
@@ -185,6 +187,7 @@ export class MarketApiService {
         hasDiscount: Boolean(food.hasDiscount) || originalPrice > price,
         discount: food.discount ?? null,
         description: food.description || 'Ready food from an Urban Market JA vendor.',
+        imageUrl: this.mediaUrl(food.imageUrl),
         vendorName: vendor.name,
         vendorSlug: vendor.slug
       }];
@@ -199,5 +202,16 @@ export class MarketApiService {
 
   private slugFor(value: string): string {
     return String(value || 'store').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || `store-${Date.now()}`;
+  }
+
+  private mediaUrl(value?: string): string {
+    if (!value) return '';
+    if (/^(https?:|data:|blob:)/i.test(value)) return value;
+    const path = value.startsWith('/api/')
+      ? value
+      : value.startsWith('uploads/')
+        ? `/api/${value}`
+        : value;
+    return path.startsWith('/api/') ? apiUrl(path) : path;
   }
 }

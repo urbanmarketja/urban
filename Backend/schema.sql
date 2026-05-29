@@ -176,6 +176,16 @@ CREATE TABLE IF NOT EXISTS services (
   CONSTRAINT fk_services_store FOREIGN KEY (store_id) REFERENCES stores(id) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+CREATE TABLE IF NOT EXISTS service_images (
+  id CHAR(36) PRIMARY KEY DEFAULT (UUID()),
+  service_id CHAR(36) NOT NULL,
+  url TEXT NOT NULL,
+  alt_text VARCHAR(220),
+  sort_order INT NOT NULL DEFAULT 0,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT fk_service_images_service FOREIGN KEY (service_id) REFERENCES services(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 CREATE TABLE IF NOT EXISTS carts (
   id CHAR(36) PRIMARY KEY DEFAULT (UUID()),
   customer_user_id CHAR(36) NOT NULL,
@@ -554,6 +564,7 @@ CREATE INDEX idx_products_store_id ON products(store_id);
 CREATE INDEX idx_products_vendor_id ON products(vendor_id);
 CREATE INDEX idx_products_stock_quantity ON products(stock_quantity);
 CREATE INDEX idx_product_images_product_id ON product_images(product_id);
+CREATE INDEX idx_service_images_service_id ON service_images(service_id);
 CREATE INDEX idx_carts_customer_user_id ON carts(customer_user_id);
 CREATE INDEX idx_orders_customer_user_id ON orders(customer_user_id);
 CREATE INDEX idx_order_disputes_order_id ON order_disputes(order_id);
@@ -581,3 +592,5 @@ CREATE INDEX idx_job_applications_applicant_user_id ON job_applications(applican
 CREATE INDEX idx_compliance_alerts_vendor_id ON compliance_alerts(vendor_id);
 CREATE INDEX idx_notifications_user_id ON notifications(user_id);
 CREATE INDEX idx_admin_audit_logs_admin_user_id ON admin_audit_logs(admin_user_id);
+
+

@@ -11,8 +11,10 @@ const FEATURE_PRODUCT_DAYS = 7;
 const LARGE_HELD_BALANCE_CREDITS = 10000;
 const MAX_RESUME_BYTES = 5 * 1024 * 1024;
 const MAX_VENDOR_DOCUMENT_BYTES = 8 * 1024 * 1024;
+const MAX_LISTING_IMAGE_BYTES = 8 * 1024 * 1024;
 const RESUME_UPLOAD_DIR = config.uploadDir || path.join(__dirname, '..', 'uploads', 'resumes');
 const VENDOR_DOCUMENT_UPLOAD_DIR = path.join(path.dirname(RESUME_UPLOAD_DIR), 'vendor-documents');
+const LISTING_MEDIA_UPLOAD_DIR = path.join(path.dirname(RESUME_UPLOAD_DIR), 'listing-media');
 const VENDOR_DOCUMENT_TYPES = new Map([
   ['application/pdf', ['.pdf']],
   ['image/heic', ['.heic']],
@@ -23,6 +25,66 @@ const VENDOR_DOCUMENT_TYPES = new Map([
   ['application/msword', ['.doc']],
   ['application/vnd.openxmlformats-officedocument.wordprocessingml.document', ['.docx']]
 ]);
+const LISTING_IMAGE_TYPES = new Map([
+  ['image/heic', ['.heic']],
+  ['image/heif', ['.heif']],
+  ['image/jpeg', ['.jpg', '.jpeg']],
+  ['image/png', ['.png']],
+  ['image/webp', ['.webp']]
+]);
+
+function latestVendorSubscriptionJoin(alias = 'sub') {
+  return `
+    LEFT JOIN (
+      SELECT vs.*
+      FROM vendor_subscriptions vs
+      INNER JOIN (
+        SELECT vendor_id, MAX(created_at) AS max_created_at
+        FROM vendor_subscriptions
+        GROUP BY vendor_id
+      ) latest ON latest.vendor_id = vs.vendor_id AND latest.max_created_at = vs.created_at
+    ) ${alias} ON ${alias}.vendor_id = v.id
+  `;
+}
+
+function publicVendorSubscriptionJoin(subAlias = 'public_sub', planAlias = 'public_plan') {
+  return `
+    JOIN (
+      SELECT vs.*
+      FROM vendor_subscriptions vs
+      INNER JOIN (
+        SELECT vendor_id, MAX(created_at) AS max_created_at
+        FROM vendor_subscriptions
+        GROUP BY vendor_id
+      ) latest ON latest.vendor_id = vs.vendor_id AND latest.max_created_at = vs.created_at
+    ) ${subAlias} ON ${subAlias}.vendor_id = v.id AND ${subAlias}.status = 'active'
+    JOIN subscription_plans ${planAlias} ON ${planAlias}.id = ${subAlias}.plan_id AND ${planAlias}.code <> 'starter'
+  `;
+}
+
+function primaryProductImageJoin(alias = 'product_image') {
+  return `
+    LEFT JOIN (
+      SELECT
+        product_id AS productId,
+        SUBSTRING_INDEX(GROUP_CONCAT(url ORDER BY sort_order, created_at SEPARATOR '||'), '||', 1) AS imageUrl
+      FROM product_images
+      GROUP BY product_id
+    ) ${alias} ON ${alias}.productId = p.id
+  `;
+}
+
+function primaryServiceImageJoin(alias = 'service_image') {
+  return `
+    LEFT JOIN (
+      SELECT
+        service_id AS serviceId,
+        SUBSTRING_INDEX(GROUP_CONCAT(url ORDER BY sort_order, created_at SEPARATOR '||'), '||', 1) AS imageUrl
+      FROM service_images
+      GROUP BY service_id
+    ) ${alias} ON ${alias}.serviceId = s.id
+  `;
+}
 
 function isDatabaseEnabled() {
   return config.useDatabase;
@@ -243,6 +305,10 @@ function extensionForMimeType(mimeType) {
   return VENDOR_DOCUMENT_TYPES.get(mimeType)?.[0] || '';
 }
 
+function listingImageExtensionForMimeType(mimeType) {
+  return LISTING_IMAGE_TYPES.get(mimeType)?.[0] || '';
+}
+
 function safeDocumentFileName(value, mimeType) {
   const fallback = `registration-document${extensionForMimeType(mimeType) || '.pdf'}`;
   let cleaned = cleanFileName(value, fallback);
@@ -251,6 +317,18 @@ function safeDocumentFileName(value, mimeType) {
   const hasAllowedExtension = allowedExtensions.some((extension) => lowerName.endsWith(extension));
   if (!hasAllowedExtension) {
     cleaned = `${cleaned || 'registration-document'}${allowedExtensions[0] || '.bin'}`;
+  }
+  return cleaned;
+}
+
+function safeListingImageFileName(value, mimeType) {
+  const fallback = `listing-photo${listingImageExtensionForMimeType(mimeType) || '.jpg'}`;
+  let cleaned = cleanFileName(value, fallback);
+  const lowerName = cleaned.toLowerCase();
+  const allowedExtensions = LISTING_IMAGE_TYPES.get(mimeType) || [];
+  const hasAllowedExtension = allowedExtensions.some((extension) => lowerName.endsWith(extension));
+  if (!hasAllowedExtension) {
+    cleaned = `${cleaned || 'listing-photo'}${allowedExtensions[0] || '.jpg'}`;
   }
   return cleaned;
 }
@@ -290,6 +368,32 @@ function looksLikeAllowedDocument(buffer, mimeType) {
       && buffer[1] === 0xcf
       && buffer[2] === 0x11
       && buffer[3] === 0xe0;
+  }
+  return false;
+}
+
+function looksLikeAllowedImage(buffer, mimeType) {
+  if (mimeType === 'image/jpeg') {
+    return buffer.length >= 3 && buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff;
+  }
+  if (mimeType === 'image/png') {
+    return buffer.length >= 8
+      && buffer[0] === 0x89
+      && buffer[1] === 0x50
+      && buffer[2] === 0x4e
+      && buffer[3] === 0x47
+      && buffer[4] === 0x0d
+      && buffer[5] === 0x0a
+      && buffer[6] === 0x1a
+      && buffer[7] === 0x0a;
+  }
+  if (mimeType === 'image/webp') {
+    return buffer.length >= 12
+      && buffer.subarray(0, 4).toString('utf8') === 'RIFF'
+      && buffer.subarray(8, 12).toString('utf8') === 'WEBP';
+  }
+  if (mimeType === 'image/heic' || mimeType === 'image/heif') {
+    return buffer.length >= 12 && buffer.subarray(4, 8).toString('utf8') === 'ftyp';
   }
   return false;
 }
@@ -356,6 +460,37 @@ async function saveVendorDocumentUpload(documentId, body) {
   return `uploads/vendor-documents/${fileName}`;
 }
 
+async function saveListingImageUpload(imageId, body) {
+  if (!body.imageDataBase64) {
+    return body.url || body.imageUrl || null;
+  }
+
+  const mimeType = String(body.imageMimeType || '').toLowerCase();
+  if (!LISTING_IMAGE_TYPES.has(mimeType)) {
+    const error = new Error('Upload a JPG, PNG, WEBP, HEIC, or HEIF image');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const buffer = Buffer.from(String(body.imageDataBase64), 'base64');
+  if (!buffer.length || buffer.length > MAX_LISTING_IMAGE_BYTES) {
+    const error = new Error('Listing photo must be 8 MB or smaller');
+    error.statusCode = 400;
+    throw error;
+  }
+  if (!looksLikeAllowedImage(buffer, mimeType)) {
+    const error = new Error('Uploaded listing photo does not match the selected image type');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  await fs.mkdir(LISTING_MEDIA_UPLOAD_DIR, { recursive: true });
+  const imageName = safeListingImageFileName(body.imageName, mimeType);
+  const fileName = `${imageId}-${imageName}`;
+  await fs.writeFile(path.join(LISTING_MEDIA_UPLOAD_DIR, fileName), buffer);
+  return `uploads/listing-media/${fileName}`;
+}
+
 function contentTypeForDocument(fileName) {
   const extension = path.extname(String(fileName || '')).toLowerCase();
   return {
@@ -371,10 +506,24 @@ function contentTypeForDocument(fileName) {
   }[extension] || 'application/octet-stream';
 }
 
+function contentTypeForListingImage(fileName) {
+  const extension = path.extname(String(fileName || '')).toLowerCase();
+  return {
+    '.heic': 'image/heic',
+    '.heif': 'image/heif',
+    '.jpeg': 'image/jpeg',
+    '.jpg': 'image/jpeg',
+    '.png': 'image/png',
+    '.webp': 'image/webp'
+  }[extension] || 'application/octet-stream';
+}
+
 async function listVendors(activeOnly = true, registeredOnly = false) {
   const where = [
     activeOnly ? "v.status = 'active'" : '',
-    registeredOnly ? "v.registration_status = 'registered'" : ''
+    registeredOnly ? "v.registration_status = 'registered'" : '',
+    registeredOnly ? "sub.status = 'active'" : '',
+    registeredOnly ? "COALESCE(plan.code, 'starter') <> 'starter'" : ''
   ].filter(Boolean);
   const rows = await query(`
     SELECT
@@ -394,20 +543,13 @@ async function listVendors(activeOnly = true, registeredOnly = false) {
       v.status AS status,
       v.onboarded_at AS onboardedAt,
       sub.status AS subscriptionStatus,
+      plan.code AS subscriptionPlanCode,
       plan.name AS subscriptionPlan,
       sub.last_payment_at AS lastPaymentAt,
       sub.current_period_end AS nextBillingAt
     FROM vendors v
     LEFT JOIN stores st ON st.vendor_id = v.id
-    LEFT JOIN (
-      SELECT vs.*
-      FROM vendor_subscriptions vs
-      INNER JOIN (
-        SELECT vendor_id, MAX(created_at) AS max_created_at
-        FROM vendor_subscriptions
-        GROUP BY vendor_id
-      ) latest ON latest.vendor_id = vs.vendor_id AND latest.max_created_at = vs.created_at
-    ) sub ON sub.vendor_id = v.id
+    ${latestVendorSubscriptionJoin('sub')}
     LEFT JOIN subscription_plans plan ON plan.id = sub.plan_id
     ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
     ORDER BY st.name, v.business_name
@@ -425,6 +567,7 @@ async function listVendors(activeOnly = true, registeredOnly = false) {
     lastPaymentAt: row.lastPaymentAt ? dateOnly(row.lastPaymentAt) : null,
     nextBillingAt: row.nextBillingAt ? dateOnly(row.nextBillingAt) : null,
     subscriptionStatus: row.subscriptionStatus || 'trial',
+    subscriptionPlanCode: row.subscriptionPlanCode || 'starter',
     subscriptionPlan: row.subscriptionPlan || 'Starter vendor'
   }));
 }
@@ -456,10 +599,13 @@ async function listProducts() {
       p.stock_quantity AS stockQuantity,
       p.delivery_day AS deliveryDay,
       p.description,
+      product_image.imageUrl,
       feature.featuredUntil
     FROM products p
     JOIN vendors v ON v.id = p.vendor_id
+    ${publicVendorSubscriptionJoin()}
     LEFT JOIN stores st ON st.id = p.store_id
+    ${primaryProductImageJoin()}
     LEFT JOIN (
       SELECT product_id AS productId, MAX(ends_at) AS featuredUntil
       FROM product_features
@@ -520,11 +666,14 @@ async function listServices() {
       s.pricing_type AS pricingType,
       s.description,
       s.details,
+      service_image.imageUrl,
       v.business_name AS vendor,
       st.slug AS storeSlug
     FROM services s
     JOIN vendors v ON v.id = s.vendor_id
+    ${publicVendorSubscriptionJoin()}
     LEFT JOIN stores st ON st.id = s.store_id
+    ${primaryServiceImageJoin()}
     WHERE s.status = 'published'
       AND v.status = 'active'
       AND v.registration_status = 'registered'
@@ -548,10 +697,12 @@ async function findServiceById(id) {
 
 async function listFoods() {
   const rows = await query(`
-    SELECT p.id, p.name, p.vendor_id AS vendorId, p.store_id AS storeId, p.price_jmd AS price, p.description
+    SELECT p.id, p.name, p.vendor_id AS vendorId, p.store_id AS storeId, p.price_jmd AS price, p.description, product_image.imageUrl
     FROM products p
     JOIN vendors v ON v.id = p.vendor_id
+    ${publicVendorSubscriptionJoin()}
     LEFT JOIN stores st ON st.id = p.store_id
+    ${primaryProductImageJoin()}
     WHERE p.type = 'food'
       AND p.status = 'published'
       AND v.status = 'active'
@@ -593,7 +744,9 @@ async function listJobs(approvedOnly = true) {
       j.status
     FROM jobs j
     LEFT JOIN vendors v ON v.id = j.vendor_id
-    ${approvedOnly ? "WHERE j.status = 'published' AND (j.vendor_id IS NULL OR (v.status = 'active' AND v.registration_status = 'registered'))" : ''}
+    ${latestVendorSubscriptionJoin('job_sub')}
+    LEFT JOIN subscription_plans job_plan ON job_plan.id = job_sub.plan_id
+    ${approvedOnly ? "WHERE j.status = 'published' AND (j.vendor_id IS NULL OR (v.status = 'active' AND v.registration_status = 'registered' AND job_sub.status = 'active' AND COALESCE(job_plan.code, 'starter') <> 'starter'))" : ''}
     ORDER BY j.created_at DESC
   `);
 
@@ -630,6 +783,27 @@ async function listUsers() {
 async function updateUserStatus(userId, status) {
   const normalizedStatus = ['active', 'disabled', 'pending'].includes(status) ? status : 'active';
   await query('UPDATE users SET status = :status WHERE id = :userId', { userId, status: normalizedStatus });
+  const user = (await listUsers()).find((item) => item.id === userId);
+  if (!user) {
+    const error = new Error('User not found');
+    error.statusCode = 404;
+    throw error;
+  }
+  return user;
+}
+
+async function promoteUserToAdmin(userId) {
+  await query(`
+    UPDATE users
+    SET role = 'admin', status = 'active'
+    WHERE id = :userId
+  `, { userId });
+  await query(`
+    INSERT INTO admin_profiles (user_id, title)
+    VALUES (:userId, 'Platform admin')
+    ON DUPLICATE KEY UPDATE title = VALUES(title)
+  `, { userId });
+
   const user = (await listUsers()).find((item) => item.id === userId);
   if (!user) {
     const error = new Error('User not found');
@@ -809,6 +983,50 @@ async function updateVendorStatus(vendorId, body) {
   return vendor;
 }
 
+async function updateVendorSubscription(vendorId, body) {
+  const vendors = await listVendors(false);
+  const vendor = vendors.find((item) => item.id === vendorId);
+  const planRows = await query(`
+    SELECT id, code, name, monthly_price_jmd AS monthlyPrice
+    FROM subscription_plans
+    WHERE id = :planId OR code = :planId
+    LIMIT 1
+  `, { planId: body.planId });
+  const plan = planRows[0];
+  const status = ['trial', 'active', 'past_due', 'cancelled'].includes(body.status) ? body.status : 'active';
+
+  if (!vendor || !plan) {
+    const error = new Error('Vendor subscription update requires a valid vendor and plan');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const currentPeriodEnd = body.currentPeriodEnd || (() => {
+    const end = new Date();
+    end.setMonth(end.getMonth() + 1);
+    return end.toISOString().split('T')[0];
+  })();
+
+  await transaction(async (tx) => {
+    await tx.query(`
+      UPDATE vendor_subscriptions
+      SET status = 'cancelled'
+      WHERE vendor_id = :vendorId AND status IN ('trial', 'active', 'past_due')
+    `, { vendorId });
+    await tx.query(`
+      INSERT INTO vendor_subscriptions (vendor_id, plan_id, status, current_period_start, current_period_end, last_payment_at)
+      VALUES (:vendorId, :planId, :status, CURRENT_DATE, :currentPeriodEnd, CASE WHEN :status = 'active' THEN CURRENT_TIMESTAMP ELSE NULL END)
+    `, {
+      vendorId,
+      planId: plan.id,
+      status,
+      currentPeriodEnd
+    });
+  });
+
+  return (await listVendors(false)).find((item) => item.id === vendorId);
+}
+
 async function defaultVendorIdForUser(userId) {
   const vendorIds = await vendorIdsForUser(userId);
   return vendorIds[0] || null;
@@ -865,6 +1083,7 @@ async function cartItemsForCart(cartId) {
     JOIN carts c ON c.id = ci.cart_id
     JOIN products p ON p.id = ci.product_id
     JOIN vendors v ON v.id = ci.vendor_id
+    ${publicVendorSubscriptionJoin()}
     LEFT JOIN stores st ON st.id = ci.store_id
     WHERE ci.cart_id = :cartId
       AND p.status = 'published'
@@ -909,6 +1128,7 @@ async function addCartItem(customerUserId, { productId, qty = 1 }) {
     SELECT p.id, p.vendor_id AS vendorId, p.store_id AS storeId, p.price_jmd AS price, p.stock_quantity AS stockQuantity
     FROM products p
     JOIN vendors v ON v.id = p.vendor_id
+    ${publicVendorSubscriptionJoin()}
     LEFT JOIN stores st ON st.id = p.store_id
     WHERE p.id = :productId
       AND p.status = 'published'
@@ -958,6 +1178,7 @@ async function updateCartItem(customerUserId, productId, qty) {
     SELECT p.stock_quantity AS stockQuantity
     FROM products p
     JOIN vendors v ON v.id = p.vendor_id
+    ${publicVendorSubscriptionJoin()}
     LEFT JOIN stores st ON st.id = p.store_id
     WHERE p.id = :productId
       AND p.status = 'published'
@@ -1408,6 +1629,7 @@ async function createOrder({ customer = {}, paymentMethod = 'Dime', items = [] }
           SELECT p.id, p.store_id AS storeId, p.vendor_id AS vendorId, p.name, p.price_jmd AS price, p.stock_quantity AS stockQuantity
           FROM products p
           JOIN vendors v ON v.id = p.vendor_id
+          ${publicVendorSubscriptionJoin()}
           LEFT JOIN stores st ON st.id = p.store_id
           WHERE p.id = :id
             AND p.status = 'published'
@@ -1430,6 +1652,7 @@ async function createOrder({ customer = {}, paymentMethod = 'Dime', items = [] }
         : vendorId ? await tx.query(`
           SELECT st.id AS storeId
           FROM vendors v
+          ${publicVendorSubscriptionJoin()}
           JOIN stores st ON st.vendor_id = v.id
           WHERE v.id = :vendorId
             AND v.status = 'active'
@@ -2992,6 +3215,21 @@ async function vendorDocumentDownload(documentId) {
   };
 }
 
+function listingMediaDownload(fileName) {
+  const safeName = path.basename(String(fileName || ''));
+  if (!safeName) return null;
+  const filePath = path.resolve(LISTING_MEDIA_UPLOAD_DIR, safeName);
+  const uploadRoot = path.resolve(LISTING_MEDIA_UPLOAD_DIR);
+  if (!filePath.startsWith(`${uploadRoot}${path.sep}`)) {
+    return null;
+  }
+  return {
+    fileName: safeName,
+    filePath,
+    contentType: contentTypeForListingImage(safeName)
+  };
+}
+
 async function storeByVendorId(vendorId) {
   const rows = await query(`
     SELECT
@@ -3037,10 +3275,12 @@ async function listVendorProducts(vendorIds) {
       p.delivery_day AS deliveryDay,
       p.status,
       p.created_at AS createdAt,
+      product_image.imageUrl,
       discounts.discountIds,
       discounts.discountNames,
       feature.featuredUntil
     FROM products p
+    ${primaryProductImageJoin()}
     LEFT JOIN (
       SELECT
         dp.product_id AS productId,
@@ -3148,10 +3388,23 @@ async function listVendorDiscounts(vendorIds) {
 async function listVendorServices(vendorIds) {
   if (!vendorIds.length) return [];
   return query(`
-    SELECT id, vendor_id AS vendorId, store_id AS storeId, name, category, description, details, price_jmd AS price, pricing_type AS pricingType, status, created_at AS createdAt
-    FROM services
-    WHERE FIND_IN_SET(vendor_id, :vendorIds)
-    ORDER BY created_at DESC
+    SELECT
+      s.id,
+      s.vendor_id AS vendorId,
+      s.store_id AS storeId,
+      s.name,
+      s.category,
+      s.description,
+      s.details,
+      s.price_jmd AS price,
+      s.pricing_type AS pricingType,
+      s.status,
+      s.created_at AS createdAt,
+      service_image.imageUrl
+    FROM services s
+    ${primaryServiceImageJoin()}
+    WHERE FIND_IN_SET(s.vendor_id, :vendorIds)
+    ORDER BY s.created_at DESC
   `, { vendorIds: vendorIds.join(',') });
 }
 
@@ -3501,21 +3754,33 @@ async function updateProductStock(productId, body) {
 
 async function createProductImage(productId, body) {
   const id = randomUUID();
+  const url = await saveListingImageUpload(id, body);
+  if (!url) {
+    const error = new Error('Choose a listing photo or provide a media URL');
+    error.statusCode = 400;
+    throw error;
+  }
   await query(`
     INSERT INTO product_images (id, product_id, url, alt_text, sort_order)
     VALUES (:id, :productId, :url, :altText, :sortOrder)
   `, {
     id,
     productId,
-    url: body.url,
+    url,
     altText: body.altText || null,
     sortOrder: Number(body.sortOrder) || 0
   });
-  return { id, productId, url: body.url, altText: body.altText || '', sortOrder: Number(body.sortOrder) || 0 };
+  return { id, productId, url, altText: body.altText || '', sortOrder: Number(body.sortOrder) || 0 };
 }
 
 async function createStoreMedia(storeId, body) {
   const id = randomUUID();
+  const url = await saveListingImageUpload(id, body);
+  if (!url) {
+    const error = new Error('Choose a store media image or provide a media URL');
+    error.statusCode = 400;
+    throw error;
+  }
   await query(`
     INSERT INTO store_media (id, store_id, media_type, url, alt_text, sort_order)
     VALUES (:id, :storeId, :mediaType, :url, :altText, :sortOrder)
@@ -3523,11 +3788,32 @@ async function createStoreMedia(storeId, body) {
     id,
     storeId,
     mediaType: ['logo', 'banner', 'gallery'].includes(body.mediaType) ? body.mediaType : 'gallery',
-    url: body.url,
+    url,
     altText: body.altText || null,
     sortOrder: Number(body.sortOrder) || 0
   });
-  return { id, storeId, mediaType: body.mediaType || 'gallery', url: body.url, altText: body.altText || '', sortOrder: Number(body.sortOrder) || 0 };
+  return { id, storeId, mediaType: body.mediaType || 'gallery', url, altText: body.altText || '', sortOrder: Number(body.sortOrder) || 0 };
+}
+
+async function createServiceImage(serviceId, body) {
+  const id = randomUUID();
+  const url = await saveListingImageUpload(id, body);
+  if (!url) {
+    const error = new Error('Choose a service photo or provide a media URL');
+    error.statusCode = 400;
+    throw error;
+  }
+  await query(`
+    INSERT INTO service_images (id, service_id, url, alt_text, sort_order)
+    VALUES (:id, :serviceId, :url, :altText, :sortOrder)
+  `, {
+    id,
+    serviceId,
+    url,
+    altText: body.altText || null,
+    sortOrder: Number(body.sortOrder) || 0
+  });
+  return { id, serviceId, url, altText: body.altText || '', sortOrder: Number(body.sortOrder) || 0 };
 }
 
 async function createService(body) {
@@ -5563,6 +5849,7 @@ module.exports = {
   createProductImage,
   createRegistrationRequest,
   createService,
+  createServiceImage,
   createServiceBookingDispute,
   createStoreMedia,
   createUser,
@@ -5594,6 +5881,7 @@ module.exports = {
   listCustomerReviewTargets,
   listFoods,
   listJobs,
+  listingMediaDownload,
   listNotificationsForVendorIds,
   listOrders,
   listVendorOrders,
@@ -5619,6 +5907,7 @@ module.exports = {
   markPaymentSessionPaid,
   paySubscriptionWithWallet,
   profileForUser,
+  promoteUserToAdmin,
   recordAdminAudit,
   processPaymentWebhook,
   removeCartItem,
@@ -5636,6 +5925,7 @@ module.exports = {
   updateProductStock,
   updateUserProfile,
   updateUserStatus,
+  updateVendorSubscription,
   upsertVendorPayoutProfile,
   updateVendorCheckoutRequestStatus,
   updateVendorStatus,

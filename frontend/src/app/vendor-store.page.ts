@@ -118,7 +118,13 @@ interface CustomerAddress {
           <div class="product-grid">
             @for (product of storeProducts(); track product.id) {
               <article class="product-card">
-                <div class="product-image"><span class="visual-icon">{{ iconFor(product.category) }}</span>{{ product.category }}</div>
+                <div class="product-image" [class.has-photo]="product.imageUrl">
+                  @if (product.imageUrl) {
+                    <img [src]="product.imageUrl" [alt]="product.name" loading="lazy" decoding="async">
+                  } @else {
+                    <span class="visual-icon">{{ iconFor(product.category) }}</span>{{ product.category }}
+                  }
+                </div>
                 <p class="product-tag">Delivery: {{ product.deliveryDay }}</p>
                 <h3>{{ product.name }}</h3>
                 <p>{{ product.description }}</p>

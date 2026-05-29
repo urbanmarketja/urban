@@ -68,6 +68,7 @@ export interface Product {
   stockQuantity?: number;
   discountIds?: string;
   discountNames?: string;
+  imageUrl?: string;
   isFeatured?: boolean;
   featuredUntil?: string | null;
 }
@@ -109,6 +110,7 @@ export interface MarketService {
   pricingType: string;
   description: string;
   details: string;
+  imageUrl?: string;
   reviews: ServiceReview[];
 }
 
@@ -122,6 +124,7 @@ export interface FoodOffering {
   originalPrice?: number;
   hasDiscount?: boolean;
   discount?: DiscountSummary | null;
+  imageUrl?: string;
   description: string;
 }
 
@@ -406,16 +409,26 @@ export const currentUser: UserProfile = {
   preferences: ['Fresh produce', 'Ready meals', 'Delivery updates']
 };
 
+function isStarterPlan(vendor: Vendor): boolean {
+  return vendor.subscriptionPlan.toLowerCase().includes('starter');
+}
+
+function isPublicVendor(vendor: Vendor): boolean {
+  return vendor.registrationStatus === 'registered'
+    && vendor.subscriptionStatus === 'active'
+    && !isStarterPlan(vendor);
+}
+
 function isRegisteredVendor(vendorId: string): boolean {
-  return vendors.some((vendor) => vendor.id === vendorId && vendor.registrationStatus === 'registered');
+  return vendors.some((vendor) => vendor.id === vendorId && isPublicVendor(vendor));
 }
 
 export function vendorById(id: string): Vendor | undefined {
-  return vendors.find((vendor) => vendor.id === id && vendor.registrationStatus === 'registered');
+  return vendors.find((vendor) => vendor.id === id && isPublicVendor(vendor));
 }
 
 export function vendorBySlug(slug: string): Vendor | undefined {
-  return vendors.find((vendor) => vendor.slug === slug && vendor.registrationStatus === 'registered');
+  return vendors.find((vendor) => vendor.slug === slug && isPublicVendor(vendor));
 }
 
 export function productsForVendor(vendorId: string): Product[] {
@@ -500,5 +513,6 @@ export function complianceMessage(vendor: Vendor): string {
 
 export function canPublishProducts(vendor: Vendor): boolean {
   return vendor.subscriptionStatus === 'active'
-    && vendor.registrationStatus === 'registered';
+    && vendor.registrationStatus === 'registered'
+    && !isStarterPlan(vendor);
 }

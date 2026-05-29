@@ -35,6 +35,13 @@ interface VendorRecord {
   nextBillingAt?: string;
 }
 
+interface ListingImageUpload {
+  imageName: string;
+  imageMimeType: string;
+  imageSizeBytes: number;
+  imageDataBase64: string;
+}
+
 @Component({
   selector: 'app-vendor-dashboard-page',
   imports: [FormsModule, RouterLink],
@@ -434,6 +441,11 @@ interface VendorRecord {
                   <form class="profile-form compact-form" (ngSubmit)="addMedia()">
                     <label>Media URL <input name="mediaUrl" [(ngModel)]="mediaForm.url" placeholder="https://..."></label>
                     <label>Media type <select name="mediaType" [(ngModel)]="mediaForm.mediaType"><option>logo</option><option>banner</option><option>gallery</option></select></label>
+                    <div class="document-upload-actions">
+                      <label class="button secondary-button file-choice-button" for="storeMediaImageFile">Choose image</label>
+                      <input id="storeMediaImageFile" class="visually-hidden-file" name="storeMediaImageFile" type="file" accept="image/*,.heic,.heif,image/heic,image/heif" (change)="selectStoreMediaFile($event)">
+                    </div>
+                    <p class="product-meta">{{ imageFileLabel(mediaImageForm, 'Optional JPG, PNG, WEBP, HEIC, or HEIF image up to 8 MB.') }}</p>
                     <button class="button secondary-button" type="submit">Add media</button>
                   </form>
                 </article>
@@ -464,6 +476,11 @@ interface VendorRecord {
                     <label>Status <select name="productStatus" [(ngModel)]="listingForm.status"><option>draft</option><option [disabled]="!canPublish(activeVendor())">published</option></select></label>
                   </div>
                   <label>Description <textarea name="productDescription" [(ngModel)]="listingForm.description" rows="3" placeholder="Describe the item"></textarea></label>
+                  <div class="document-upload-actions">
+                    <label class="button secondary-button file-choice-button" for="listingImageFile">Choose product photo</label>
+                    <input id="listingImageFile" class="visually-hidden-file" name="listingImageFile" type="file" accept="image/*,.heic,.heif,image/heic,image/heif" (change)="selectListingImageFile($event)">
+                  </div>
+                  <p class="product-meta">{{ imageFileLabel(listingImageForm, 'Optional JPG, PNG, WEBP, HEIC, or HEIF image up to 8 MB.') }}</p>
                   <button class="button primary-button" type="submit">Create listing</button>
                 </form>
 
@@ -473,7 +490,14 @@ interface VendorRecord {
                     <tbody>
                       @for (product of vendorProducts(); track product.id) {
                         <tr>
-                          <td><strong>{{ product.name }}</strong><br><span class="product-meta">{{ product.description || 'No description' }}</span></td>
+                          <td>
+                            <div class="listing-cell">
+                              @if (product.imageUrl) {
+                                <img class="listing-thumb" [src]="mediaUrl(product.imageUrl)" [alt]="product.name" loading="lazy" decoding="async">
+                              }
+                              <div><strong>{{ product.name }}</strong><br><span class="product-meta">{{ product.description || 'No description' }}</span></div>
+                            </div>
+                          </td>
                           <td>{{ product.type }}</td>
                           <td>
                             <div class="price-block">
@@ -513,6 +537,11 @@ interface VendorRecord {
                             } @else {
                               <button class="button-sm" type="button" [disabled]="!canPublish(activeVendor())" (click)="featureProduct(product)">Feature</button>
                             }
+                            <label class="button-sm" [for]="'productPhoto' + product.id">Photo</label>
+                            <input [id]="'productPhoto' + product.id" class="visually-hidden-file" type="file" accept="image/*,.heic,.heif,image/heic,image/heif" (change)="selectProductImageFile(product, $event)">
+                            @if (productImageDrafts[product.id]?.imageDataBase64) {
+                              <button class="button-sm" type="button" (click)="uploadProductImage(product)">Upload photo</button>
+                            }
                           </td>
                         </tr>
                       } @empty {
@@ -547,6 +576,11 @@ interface VendorRecord {
                     <label>Status <select name="serviceStatus" [(ngModel)]="serviceForm.status"><option>draft</option><option [disabled]="!canPublish(activeVendor())">published</option></select></label>
                   </div>
                   <label>Description <textarea name="serviceDescription" [(ngModel)]="serviceForm.description" rows="3" placeholder="Describe the service"></textarea></label>
+                  <div class="document-upload-actions">
+                    <label class="button secondary-button file-choice-button" for="serviceImageFile">Choose service photo</label>
+                    <input id="serviceImageFile" class="visually-hidden-file" name="serviceImageFile" type="file" accept="image/*,.heic,.heif,image/heic,image/heif" (change)="selectServiceImageFile($event)">
+                  </div>
+                  <p class="product-meta">{{ imageFileLabel(serviceImageForm, 'Optional JPG, PNG, WEBP, HEIC, or HEIF image up to 8 MB.') }}</p>
                   <button class="button primary-button" type="submit">Create service</button>
                 </form>
 
@@ -556,7 +590,14 @@ interface VendorRecord {
                     <tbody>
                       @for (service of vendorServices(); track service.id) {
                         <tr>
-                          <td><strong>{{ service.name }}</strong><br><span class="product-meta">{{ service.description || 'No description' }}</span></td>
+                          <td>
+                            <div class="listing-cell">
+                              @if (service.imageUrl) {
+                                <img class="listing-thumb" [src]="mediaUrl(service.imageUrl)" [alt]="service.name" loading="lazy" decoding="async">
+                              }
+                              <div><strong>{{ service.name }}</strong><br><span class="product-meta">{{ service.description || 'No description' }}</span></div>
+                            </div>
+                          </td>
                           <td>{{ service.category }}</td>
                           <td>{{ money(service.price) }} {{ service.pricingType }}</td>
                           <td><span class="status-pill" [class.warn]="service.status !== 'published'">{{ service.status }}</span></td>
@@ -565,6 +606,11 @@ interface VendorRecord {
                               <button class="button-sm danger" type="button" (click)="updateServiceStatus(service, 'paused')">Pause</button>
                             } @else {
                               <button class="button-sm" type="button" [disabled]="!canPublish(activeVendor())" (click)="updateServiceStatus(service, 'published')">Publish</button>
+                            }
+                            <label class="button-sm" [for]="'servicePhoto' + service.id">Photo</label>
+                            <input [id]="'servicePhoto' + service.id" class="visually-hidden-file" type="file" accept="image/*,.heic,.heif,image/heic,image/heif" (change)="selectExistingServiceImageFile(service, $event)">
+                            @if (serviceImageDrafts[service.id]?.imageDataBase64) {
+                              <button class="button-sm" type="button" (click)="uploadServiceImage(service)">Upload photo</button>
                             }
                           </td>
                         </tr>
@@ -777,12 +823,17 @@ export class VendorDashboardPage implements OnInit {
   protected listingForm = { type: 'product', name: '', price: null as number | null, stockQuantity: null as number | null, deliveryDay: '', status: 'draft', description: '' };
   protected serviceForm = { name: '', category: '', price: null as number | null, pricingType: 'Fixed', status: 'draft', description: '' };
   protected mediaForm = { mediaType: 'gallery', url: '' };
+  protected mediaImageForm: ListingImageUpload = this.emptyImageForm();
+  protected listingImageForm: ListingImageUpload = this.emptyImageForm();
+  protected serviceImageForm: ListingImageUpload = this.emptyImageForm();
   protected documentForm = { documentType: 'Business registration document', documentName: '', documentMimeType: '', documentSizeBytes: 0, documentDataBase64: '' };
   protected discountForm = { name: '', code: '', discountType: 'percent', amount: null as number | null };
   protected payoutForm = { payoutMethod: 'bank_transfer', payoutDetails: '' };
   protected checkoutForm = { amountCoins: null as number | null, payoutMethod: 'bank_transfer', payoutDetails: '' };
   protected selectedDiscountForProduct: Record<string, string> = {};
   protected selectedDiscountForCart: Record<string, string> = {};
+  protected productImageDrafts: Record<string, ListingImageUpload> = {};
+  protected serviceImageDrafts: Record<string, ListingImageUpload> = {};
 
   ngOnInit(): void {
     void this.loadPlans();
@@ -836,6 +887,11 @@ export class VendorDashboardPage implements OnInit {
       };
     }
     this.mediaForm = { mediaType: 'gallery', url: '' };
+    this.mediaImageForm = this.emptyImageForm();
+    this.listingImageForm = this.emptyImageForm();
+    this.serviceImageForm = this.emptyImageForm();
+    this.productImageDrafts = {};
+    this.serviceImageDrafts = {};
     this.resetDocumentForm();
     this.selectedCheckoutRequestId.set('');
     this.syncPayoutFormFromProfile();
@@ -957,8 +1013,22 @@ export class VendorDashboardPage implements OnInit {
       this.message.set('Business registration is required before products or foods can be published.');
       return;
     }
-    await this.post('/api/products', { ...this.listingForm, vendorId: this.selectedVendorId }, 'Listing saved.');
+    const hadListingImage = Boolean(this.listingImageForm.imageDataBase64);
+    const product = await this.post('/api/products', { ...this.listingForm, vendorId: this.selectedVendorId }, 'Listing saved.', false);
+    if (!product?.id) return;
+    let imageSaved = false;
+    if (product?.id && hadListingImage) {
+      const image = await this.post(`/api/products/${product.id}/images`, {
+        ...this.listingImageForm,
+        altText: this.listingForm.name || product.name || 'Listing photo'
+      }, 'Listing photo uploaded.', false);
+      imageSaved = Boolean(image?.id);
+    }
     this.listingForm = { type: 'product', name: '', price: null, stockQuantity: null, deliveryDay: '', status: 'draft', description: '' };
+    this.listingImageForm = this.emptyImageForm();
+    this.resetFileInput('listingImageFile');
+    await this.loadOperations();
+    this.message.set(hadListingImage ? (imageSaved ? 'Listing and photo saved.' : 'Listing saved, but the photo was not uploaded.') : 'Listing saved.');
   }
 
   protected async updateStock(product: any): Promise<void> {
@@ -978,8 +1048,22 @@ export class VendorDashboardPage implements OnInit {
       this.message.set('Business registration is required before services can be published.');
       return;
     }
-    await this.post('/api/services', { ...this.serviceForm, vendorId: this.selectedVendorId }, 'Service saved.');
+    const hadServiceImage = Boolean(this.serviceImageForm.imageDataBase64);
+    const service = await this.post('/api/services', { ...this.serviceForm, vendorId: this.selectedVendorId }, 'Service saved.', false);
+    if (!service?.id) return;
+    let imageSaved = false;
+    if (service?.id && hadServiceImage) {
+      const image = await this.post(`/api/services/${service.id}/images`, {
+        ...this.serviceImageForm,
+        altText: this.serviceForm.name || service.name || 'Service photo'
+      }, 'Service photo uploaded.', false);
+      imageSaved = Boolean(image?.id);
+    }
     this.serviceForm = { name: '', category: '', price: null, pricingType: 'Fixed', status: 'draft', description: '' };
+    this.serviceImageForm = this.emptyImageForm();
+    this.resetFileInput('serviceImageFile');
+    await this.loadOperations();
+    this.message.set(hadServiceImage ? (imageSaved ? 'Service and photo saved.' : 'Service saved, but the photo was not uploaded.') : 'Service saved.');
   }
 
   protected async updateServiceStatus(service: any, status: string): Promise<void> {
@@ -1065,8 +1149,95 @@ export class VendorDashboardPage implements OnInit {
   protected async addMedia(): Promise<void> {
     const store = this.activeStore();
     if (!store) return;
-    await this.post(`/api/stores/${store.id}/media`, this.mediaForm, 'Store media added.');
+    await this.post(`/api/stores/${store.id}/media`, {
+      ...this.mediaForm,
+      ...this.mediaImageForm,
+      altText: this.mediaForm.mediaType === 'logo' ? `${store.name} logo` : `${store.name} media`
+    }, 'Store media added.');
     this.mediaForm = { mediaType: 'gallery', url: '' };
+    this.mediaImageForm = this.emptyImageForm();
+    this.resetFileInput('storeMediaImageFile');
+  }
+
+  protected selectStoreMediaFile(event: Event): void {
+    this.readImageFile(event, (image) => {
+      this.mediaImageForm = image;
+      if (image.imageDataBase64) this.mediaForm.url = '';
+    });
+  }
+
+  protected selectListingImageFile(event: Event): void {
+    this.readImageFile(event, (image) => {
+      this.listingImageForm = image;
+    });
+  }
+
+  protected selectServiceImageFile(event: Event): void {
+    this.readImageFile(event, (image) => {
+      this.serviceImageForm = image;
+    });
+  }
+
+  protected selectProductImageFile(product: any, event: Event): void {
+    this.readImageFile(event, (image) => {
+      this.productImageDrafts = { ...this.productImageDrafts, [product.id]: image };
+    });
+  }
+
+  protected selectExistingServiceImageFile(service: any, event: Event): void {
+    this.readImageFile(event, (image) => {
+      this.serviceImageDrafts = { ...this.serviceImageDrafts, [service.id]: image };
+    });
+  }
+
+  protected async uploadProductImage(product: any): Promise<void> {
+    const image = this.productImageDrafts[product.id];
+    if (!image?.imageDataBase64) {
+      this.message.set('Choose a product photo before uploading.');
+      return;
+    }
+    const result = await this.post(`/api/products/${product.id}/images`, {
+      ...image,
+      altText: product.name || 'Product photo'
+    }, 'Product photo uploaded.');
+    if (!result?.id) return;
+    delete this.productImageDrafts[product.id];
+    this.productImageDrafts = { ...this.productImageDrafts };
+    this.resetFileInput(`productPhoto${product.id}`);
+  }
+
+  protected async uploadServiceImage(service: any): Promise<void> {
+    const image = this.serviceImageDrafts[service.id];
+    if (!image?.imageDataBase64) {
+      this.message.set('Choose a service photo before uploading.');
+      return;
+    }
+    const result = await this.post(`/api/services/${service.id}/images`, {
+      ...image,
+      altText: service.name || 'Service photo'
+    }, 'Service photo uploaded.');
+    if (!result?.id) return;
+    delete this.serviceImageDrafts[service.id];
+    this.serviceImageDrafts = { ...this.serviceImageDrafts };
+    this.resetFileInput(`servicePhoto${service.id}`);
+  }
+
+  protected imageFileLabel(image: ListingImageUpload, fallback: string): string {
+    if (!image.imageName) return fallback;
+    const kb = image.imageSizeBytes / 1024;
+    const size = kb >= 1024 ? `${(kb / 1024).toFixed(1)} MB` : `${Math.round(kb)} KB`;
+    return `${image.imageName} selected (${size})`;
+  }
+
+  protected mediaUrl(value?: string): string {
+    if (!value) return '';
+    if (/^(https?:|data:|blob:)/i.test(value)) return value;
+    const path = value.startsWith('/api/')
+      ? value
+      : value.startsWith('uploads/')
+        ? `/api/${value}`
+        : value;
+    return path.startsWith('/api/') ? apiUrl(path) : path;
   }
 
   protected async uploadDocument(): Promise<void> {
@@ -1381,6 +1552,58 @@ export class VendorDashboardPage implements OnInit {
     }
   }
 
+  private emptyImageForm(): ListingImageUpload {
+    return {
+      imageName: '',
+      imageMimeType: '',
+      imageSizeBytes: 0,
+      imageDataBase64: ''
+    };
+  }
+
+  private readImageFile(event: Event, assign: (image: ListingImageUpload) => void): void {
+    const input = event.target as HTMLInputElement;
+    const file = input.files?.[0];
+    assign(this.emptyImageForm());
+    if (!file) return;
+
+    const allowedTypes = ['image/heic', 'image/heif', 'image/jpeg', 'image/png', 'image/webp'];
+    const allowedExtensions = ['.heic', '.heif', '.jpeg', '.jpg', '.png', '.webp'];
+    const lowerName = file.name.toLowerCase();
+    if (!allowedTypes.includes(file.type) && !allowedExtensions.some((extension) => lowerName.endsWith(extension))) {
+      this.message.set('Upload a JPG, PNG, WEBP, HEIC, or HEIF image.');
+      input.value = '';
+      return;
+    }
+    if (file.size > 8 * 1024 * 1024) {
+      this.message.set('Listing photo must be 8 MB or smaller.');
+      input.value = '';
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      const value = String(reader.result || '');
+      assign({
+        imageName: file.name,
+        imageMimeType: file.type || this.mimeTypeFromFileName(file.name),
+        imageSizeBytes: file.size,
+        imageDataBase64: value.includes(',') ? value.split(',')[1] : value
+      });
+    };
+    reader.onerror = () => {
+      this.message.set('Image could not be read. Try selecting it again.');
+      input.value = '';
+    };
+    reader.readAsDataURL(file);
+  }
+
+  private resetFileInput(id: string): void {
+    if (typeof document === 'undefined') return;
+    const input = document.getElementById(id) as HTMLInputElement | null;
+    if (input) input.value = '';
+  }
+
   private mimeTypeFromFileName(name: string): string {
     const extension = name.toLowerCase().split('.').pop();
     return {
@@ -1396,7 +1619,7 @@ export class VendorDashboardPage implements OnInit {
     }[extension || ''] || 'application/octet-stream';
   }
 
-  private async post(path: string, body: unknown, successMessage: string): Promise<void> {
+  private async post(path: string, body: unknown, successMessage: string, reload = true): Promise<any | null> {
     try {
       const response = await fetch(apiUrl(path), {
         method: 'POST',
@@ -1408,9 +1631,13 @@ export class VendorDashboardPage implements OnInit {
         throw new Error(payload.error || 'Request failed.');
       }
       this.message.set(successMessage);
-      await this.loadOperations();
+      if (reload) {
+        await this.loadOperations();
+      }
+      return payload;
     } catch (error) {
       this.message.set(error instanceof Error ? error.message : 'Request failed.');
+      return null;
     }
   }
 }

@@ -939,6 +939,21 @@ button {
   min-height: 34px;
 }
 
+.admin-inline-control {
+  display: grid;
+  gap: 7px;
+  min-width: 190px;
+}
+
+.admin-inline-control select {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--ink);
+  font: inherit;
+  min-height: 34px;
+  padding: 6px 8px;
+}
+
 .status-pill {
   background: #eef7f2;
   border-radius: 999px;
@@ -1730,6 +1745,45 @@ button:hover {
   min-height: 184px;
   overflow: hidden;
   position: relative;
+}
+
+.product-image.has-photo {
+  background: #f7faf6;
+  padding: 0;
+}
+
+.product-image.has-photo img {
+  height: 100%;
+  inset: 0;
+  object-fit: cover;
+  position: absolute;
+  width: 100%;
+}
+
+.product-image.has-photo::after {
+  background: linear-gradient(180deg, transparent 56%, rgba(0, 0, 0, 0.2));
+  opacity: 1;
+}
+
+.service-image,
+.service-detail-image {
+  margin-bottom: 14px;
+}
+
+.listing-cell {
+  align-items: center;
+  display: flex;
+  gap: 10px;
+  min-width: 220px;
+}
+
+.listing-thumb {
+  aspect-ratio: 1 / 1;
+  border: 1px solid rgba(16, 24, 21, 0.12);
+  border-radius: 6px;
+  flex: 0 0 54px;
+  object-fit: cover;
+  width: 54px;
 }
 
 .product-image::after,
@@ -2834,6 +2888,78 @@ textarea:hover {
   overflow: hidden;
   position: absolute;
   width: 1px;
+}
+
+/* Ecommerce listing media */
+.product-card .product-image,
+.service-card .product-image {
+  aspect-ratio: 4 / 3;
+  background: #f8f1df;
+  border: 1px solid rgba(23, 49, 58, 0.1);
+  min-height: 0;
+  overflow: hidden;
+  width: 100%;
+}
+
+.product-card .product-image:not(.has-photo),
+.service-card .product-image:not(.has-photo) {
+  padding: 18px;
+}
+
+.product-image.has-photo {
+  display: block;
+  isolation: isolate;
+  padding: 0;
+}
+
+.product-image.has-photo img,
+.service-detail-image.has-photo img {
+  display: block;
+  height: 100%;
+  inset: 0;
+  object-fit: cover;
+  object-position: center;
+  position: absolute;
+  transition: transform 0.22s ease;
+  width: 100%;
+  z-index: 0;
+}
+
+.product-card:hover .product-image.has-photo img,
+.service-card:hover .product-image.has-photo img {
+  transform: scale(1.025);
+}
+
+.product-image.has-photo::after {
+  background: linear-gradient(180deg, transparent 68%, rgba(0, 0, 0, 0.16));
+  opacity: 1;
+  z-index: 1;
+}
+
+.service-detail-image {
+  aspect-ratio: 16 / 10;
+  margin-bottom: 20px;
+  max-height: 420px;
+}
+
+.listing-thumb {
+  background: #f8f1df;
+  border-color: rgba(23, 49, 58, 0.14);
+  height: 64px;
+  object-fit: cover;
+  object-position: center;
+  width: 64px;
+}
+
+@media (max-width: 640px) {
+  .product-card .product-image,
+  .service-card .product-image {
+    aspect-ratio: 1 / 1;
+  }
+
+  .service-detail-image {
+    aspect-ratio: 4 / 3;
+  }
 }
 
 @media (max-width: 860px) {

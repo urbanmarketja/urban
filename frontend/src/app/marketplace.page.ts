@@ -64,7 +64,13 @@ type MarketFilter = 'all' | 'products' | 'foods' | 'services';
           <div class="product-grid">
             @for (product of filteredProducts(); track product.id) {
               <article class="product-card">
-                <div class="product-image"><span class="visual-icon">{{ labelFor(product.category) }}</span>{{ product.category }}</div>
+                <div class="product-image" [class.has-photo]="product.imageUrl">
+                  @if (product.imageUrl) {
+                    <img [src]="product.imageUrl" [alt]="product.name" loading="lazy" decoding="async">
+                  } @else {
+                    <span class="visual-icon">{{ labelFor(product.category) }}</span>{{ product.category }}
+                  }
+                </div>
                 <p class="product-tag">Delivery: {{ product.deliveryDay }}</p>
                 <h3>{{ product.name }}</h3>
                 <p>{{ product.description }}</p>
@@ -91,7 +97,13 @@ type MarketFilter = 'all' | 'products' | 'foods' | 'services';
           <div class="product-grid">
             @for (food of filteredFoods(); track food.id) {
               <article class="product-card">
-                <div class="product-image"><span class="visual-icon">Food</span>Food</div>
+                <div class="product-image" [class.has-photo]="food.imageUrl">
+                  @if (food.imageUrl) {
+                    <img [src]="food.imageUrl" [alt]="food.name" loading="lazy" decoding="async">
+                  } @else {
+                    <span class="visual-icon">Food</span>Food
+                  }
+                </div>
                 <h3>{{ food.name }}</h3>
                 <p>{{ food.description }}</p>
                 <p class="product-meta">{{ vendorName(food.vendorId) }}</p>
@@ -116,7 +128,11 @@ type MarketFilter = 'all' | 'products' | 'foods' | 'services';
           <div class="service-grid">
             @for (service of filteredServices(); track service.id) {
               <article class="service-card">
-                <span class="card-icon">{{ service.category }}</span>
+                @if (service.imageUrl) {
+                  <div class="product-image service-image has-photo"><img [src]="service.imageUrl" [alt]="service.name" loading="lazy" decoding="async"></div>
+                } @else {
+                  <span class="card-icon">{{ service.category }}</span>
+                }
                 <span class="product-tag">{{ service.category }}</span>
                 <h3>{{ service.name }}</h3>
                 <p class="product-meta">{{ service.vendor }} · {{ service.rating }} star</p>

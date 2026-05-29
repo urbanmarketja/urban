@@ -1,46 +1,26 @@
 import { Routes } from '@angular/router';
-import { HomePage } from './home.page';
-import { AlertsPage } from './alerts.page';
-import { AdminPage } from './admin.page';
-import { CartPage } from './cart.page';
-import { CheckoutPage } from './checkout.page';
-import { DashboardAccessPage } from './dashboard-access.page';
-import { FoodsPage } from './foods.page';
-import { JobDetailPage } from './job-detail.page';
-import { JobsPage } from './jobs.page';
-import { MarketplacePage } from './marketplace.page';
-import { OrderDetailPage } from './order-detail.page';
-import { PostJobPage } from './post-job.page';
-import { ProfilePage } from './profile.page';
-import { LoginPage } from './login.page';
-import { ServiceDetailPage } from './service-detail.page';
-import { ServicesPage } from './services.page';
-import { SignupPage } from './signup.page';
-import { UserDashboardPage } from './user-dashboard.page';
-import { VendorDashboardPage } from './vendor-dashboard.page';
-import { VendorStorePage } from './vendor-store.page';
 import { requireAuth } from './auth.guard';
 
 export const routes: Routes = [
-  { path: '', component: HomePage },
-  { path: 'marketplace', component: MarketplacePage },
-  { path: 'login', component: LoginPage },
-  { path: 'signup', component: SignupPage },
-  { path: 'dashboard-access', component: DashboardAccessPage, canActivate: [requireAuth] },
-  { path: 'alerts', component: AlertsPage, canActivate: [requireAuth] },
-  { path: 'user-dashboard', component: UserDashboardPage, canActivate: [requireAuth], data: { roles: ['customer', 'admin'] } },
-  { path: 'admin', component: AdminPage, canActivate: [requireAuth], data: { roles: ['admin'] } },
-  { path: 'services', component: ServicesPage },
-  { path: 'services/:id', component: ServiceDetailPage },
-  { path: 'foods', component: FoodsPage },
-  { path: 'jobs', component: JobsPage },
-  { path: 'jobs/post', component: PostJobPage, canActivate: [requireAuth], data: { roles: ['vendor', 'admin'] } },
-  { path: 'jobs/:id', component: JobDetailPage },
-  { path: 'cart', component: CartPage },
-  { path: 'checkout', component: CheckoutPage, canActivate: [requireAuth], data: { roles: ['customer', 'admin'] } },
-  { path: 'orders/:id', component: OrderDetailPage, canActivate: [requireAuth], data: { roles: ['customer', 'admin'] } },
-  { path: 'vendor-dashboard', component: VendorDashboardPage, canActivate: [requireAuth], data: { roles: ['vendor', 'admin'] } },
-  { path: 'profile', component: ProfilePage, canActivate: [requireAuth] },
-  { path: 'vendor/:slug', component: VendorStorePage },
+  { path: '', loadComponent: () => import('./home.page').then((m) => m.HomePage) },
+  { path: 'marketplace', loadComponent: () => import('./marketplace.page').then((m) => m.MarketplacePage) },
+  { path: 'login', loadComponent: () => import('./login.page').then((m) => m.LoginPage) },
+  { path: 'signup', loadComponent: () => import('./signup.page').then((m) => m.SignupPage) },
+  { path: 'dashboard-access', loadComponent: () => import('./dashboard-access.page').then((m) => m.DashboardAccessPage), canActivate: [requireAuth] },
+  { path: 'alerts', loadComponent: () => import('./alerts.page').then((m) => m.AlertsPage), canActivate: [requireAuth] },
+  { path: 'user-dashboard', loadComponent: () => import('./user-dashboard.page').then((m) => m.UserDashboardPage), canActivate: [requireAuth], data: { roles: ['customer', 'admin'] } },
+  { path: 'admin', loadComponent: () => import('./admin.page').then((m) => m.AdminPage), canActivate: [requireAuth], data: { roles: ['admin'] } },
+  { path: 'services', loadComponent: () => import('./services.page').then((m) => m.ServicesPage) },
+  { path: 'services/:id', loadComponent: () => import('./service-detail.page').then((m) => m.ServiceDetailPage) },
+  { path: 'foods', loadComponent: () => import('./foods.page').then((m) => m.FoodsPage) },
+  { path: 'jobs', loadComponent: () => import('./jobs.page').then((m) => m.JobsPage) },
+  { path: 'jobs/post', loadComponent: () => import('./post-job.page').then((m) => m.PostJobPage), canActivate: [requireAuth], data: { roles: ['vendor', 'admin'] } },
+  { path: 'jobs/:id', loadComponent: () => import('./job-detail.page').then((m) => m.JobDetailPage) },
+  { path: 'cart', loadComponent: () => import('./cart.page').then((m) => m.CartPage) },
+  { path: 'checkout', loadComponent: () => import('./checkout.page').then((m) => m.CheckoutPage), canActivate: [requireAuth], data: { roles: ['customer', 'admin'] } },
+  { path: 'orders/:id', loadComponent: () => import('./order-detail.page').then((m) => m.OrderDetailPage), canActivate: [requireAuth], data: { roles: ['customer', 'admin'] } },
+  { path: 'vendor-dashboard', loadComponent: () => import('./vendor-dashboard.page').then((m) => m.VendorDashboardPage), canActivate: [requireAuth], data: { roles: ['vendor', 'admin'] } },
+  { path: 'profile', loadComponent: () => import('./profile.page').then((m) => m.ProfilePage), canActivate: [requireAuth] },
+  { path: 'vendor/:slug', loadComponent: () => import('./vendor-store.page').then((m) => m.VendorStorePage) },
   { path: '**', redirectTo: '' }
 ];

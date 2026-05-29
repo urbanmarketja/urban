@@ -3,7 +3,7 @@ import { FormsModule } from '@angular/forms';
 import { RouterLink } from '@angular/router';
 import { apiUrl } from './api-url';
 import { AuthService } from './auth.service';
-import { formatCurrency } from './market-data';
+import { formatCurrency, type SubscriptionPlan } from './market-data';
 
 type AdminTab = 'overview' | 'users' | 'vendors' | 'orders' | 'jobs' | 'requests' | 'documents' | 'payments';
 type UserStatus = 'active' | 'disabled' | 'pending';
@@ -53,7 +53,11 @@ interface AdminVendor {
   status: VendorStatus;
   registrationStatus: RegistrationStatus;
   subscriptionStatus?: string;
+  subscriptionPlanId?: string;
+  subscriptionPlanCode?: string;
   subscriptionPlan?: string;
+  lastPaymentAt?: string | null;
+  nextBillingAt?: string | null;
 }
 
 interface AdminJob {
@@ -230,6 +234,9 @@ interface AdminAuditLogRow {
               <option value="unregistered">Unregistered</option>
               <option value="expired">Expired</option>
               <option value="paid">Paid</option>
+              <option value="trial">Trial</option>
+              <option value="past_due">Past due</option>
+              <option value="cancelled">Cancelled</option>
               <option value="requested">Requested</option>
               <option value="approved">Approved</option>
               <option value="cancelled">Cancelled</option>
@@ -265,7 +272,7 @@ interface AdminAuditLogRow {
             <div class="admin-panel-header">
               <div>
                 <h2>User Management</h2>
-                <p>Activate or disable platform accounts.</p>
+                <p>Activate accounts and promote trusted users to admin access.</p>
               </div>
             </div>
             <div class="table-wrap">
@@ -284,6 +291,11 @@ interface AdminAuditLogRow {
                         } @else {
                           <button class="button-sm" type="button" (click)="updateUserStatus(user.id, 'active')">Activate</button>
                         }
+                        @if (user.role !== 'admin') {
+                          <button class="button-sm" type="button" (click)="promoteUserToAdmin(user.id)">Make admin</button>
+                        } @else {
+                          <span class="action-note">Admin access</span>
+                        }
                       </td>
                     </tr>
                   }
@@ -298,12 +310,12 @@ interface AdminAuditLogRow {
             <div class="admin-panel-header">
               <div>
                 <h2>Vendor Management</h2>
-                <p>Control vendor status, registration standing, and publishing readiness.</p>
+                <p>Control vendor status, registration standing, subscription plans, and publishing readiness.</p>
               </div>
             </div>
             <div class="table-wrap">
               <table class="admin-table">
-                <thead><tr><th>Vendor</th><th>Location</th><th>Store</th><th>Registration</th><th>Subscription</th><th>Actions</th></tr></thead>
+                <thead><tr><th>Vendor</th><th>Location</th><th>Store</th><th>Registration</th><th>Subscription</th><th>Plan controls</th><th>Actions</th></tr></thead>
                 <tbody>
                   @for (vendor of filteredVendors(); track vendor.id) {
                     <tr>
@@ -311,7 +323,28 @@ interface AdminAuditLogRow {
                       <td>{{ vendor.location || 'Not set' }}</td>
                       <td><span class="status-pill" [class.warn]="vendor.status !== 'active'">{{ vendor.status }}</span></td>
                       <td><span class="status-pill" [class.warn]="vendor.registrationStatus !== 'registered'">{{ vendor.registrationStatus }}</span></td>
-                      <td>{{ vendor.subscriptionPlan || 'No plan' }} / {{ vendor.subscriptionStatus || 'none' }}</td>
+                      <td>
+                        <strong>{{ vendor.subscriptionPlan || 'No plan' }}</strong><br>
+                        <span class="status-pill" [class.warn]="vendor.subscriptionStatus !== 'active'">{{ vendor.subscriptionStatus || 'none' }}</span>
+                        @if (vendor.nextBillingAt) {
+                          <br><span class="product-meta">Renews {{ vendor.nextBillingAt }}</span>
+                        }
+                      </td>
+                      <td>
+                        <div class="admin-inline-control">
+                          <select [ngModel]="vendorPlanSelection(vendor)" (ngModelChange)="setVendorPlanSelection(vendor.id, $event)">
+                            @for (plan of plans(); track plan.id) {
+                              <option [value]="plan.id">{{ plan.name }}</option>
+                            }
+                          </select>
+                          <select [ngModel]="vendorSubscriptionStatusSelection(vendor)" (ngModelChange)="setVendorSubscriptionStatusSelection(vendor.id, $event)">
+                            @for (status of subscriptionStatuses; track status) {
+                              <option [value]="status">{{ status }}</option>
+                            }
+                          </select>
+                          <button class="button-sm" type="button" (click)="updateVendorPlan(vendor.id)">Apply</button>
+                        </div>
+                      </td>
                       <td class="action-cell">
                         @if (vendor.status === 'active') {
                           <button class="button-sm danger" type="button" (click)="updateVendor(vendor.id, { status: 'disabled' })">Disable</button>
@@ -857,6 +890,7 @@ export class AdminPage implements OnInit {
   protected readonly users = signal<AdminUser[]>([]);
   protected readonly adminVendors = signal<AdminVendor[]>([]);
   protected readonly jobs = signal<AdminJob[]>([]);
+  protected readonly plans = signal<SubscriptionPlan[]>([]);
   protected readonly operations = signal<any | null>(null);
   protected readonly adminOrders = computed<AdminOrder[]>(() => this.operations()?.orders ?? []);
   protected readonly adminServiceBookings = computed<AdminServiceBooking[]>(() => this.operations()?.bookings ?? []);
@@ -873,6 +907,9 @@ export class AdminPage implements OnInit {
   protected statusFilter = 'all';
   protected auditActionFilter = 'all';
   protected auditEntityFilter = 'all';
+  protected readonly subscriptionStatuses = ['trial', 'active', 'past_due', 'cancelled'];
+  private vendorPlanDrafts: Record<string, string> = {};
+  private vendorSubscriptionStatusDrafts: Record<string, string> = {};
 
   protected readonly tabs: Array<{ value: AdminTab; label: string }> = [
     { value: 'overview', label: 'Overview' },
@@ -913,7 +950,7 @@ export class AdminPage implements OnInit {
   }
 
   protected filteredVendors(): AdminVendor[] {
-    return this.adminVendors().filter((vendor) => this.matches([vendor.name, vendor.location, vendor.status, vendor.registrationStatus, vendor.subscriptionPlan]) && this.matchesStatus(vendor.status, vendor.registrationStatus));
+    return this.adminVendors().filter((vendor) => this.matches([vendor.name, vendor.location, vendor.status, vendor.registrationStatus, vendor.subscriptionPlan, vendor.subscriptionPlanCode, vendor.subscriptionStatus]) && this.matchesStatus(vendor.status, vendor.registrationStatus, vendor.subscriptionStatus || ''));
   }
 
   protected filteredJobs(): AdminJob[] {
@@ -985,7 +1022,7 @@ export class AdminPage implements OnInit {
   protected async loadOperations(): Promise<void> {
     try {
       const headers = this.auth.authHeaders();
-      const [summary, users, vendors, jobs, operations, sessions, events, alerts, finance, auditLogs] = await Promise.all([
+      const [summary, users, vendors, jobs, operations, sessions, events, alerts, finance, auditLogs, plans] = await Promise.all([
         fetch(apiUrl('/api/dashboard/admin'), { headers }),
         fetch(apiUrl('/api/users'), { headers }),
         fetch(apiUrl('/api/vendors?all=true'), { headers }),
@@ -995,7 +1032,8 @@ export class AdminPage implements OnInit {
         fetch(apiUrl('/api/payments/events'), { headers }),
         fetch(apiUrl('/api/compliance/alerts'), { headers }),
         fetch(apiUrl('/api/admin/finance-summary'), { headers }),
-        fetch(apiUrl('/api/admin/audit-logs'), { headers })
+        fetch(apiUrl('/api/admin/audit-logs'), { headers }),
+        fetch(apiUrl('/api/subscriptions/plans'), { headers })
       ]);
 
       if (summary.ok) this.summary.set(await summary.json());
@@ -1008,6 +1046,7 @@ export class AdminPage implements OnInit {
       if (alerts.ok) this.complianceAlerts.set(await alerts.json());
       if (finance.ok) this.finance.set(await finance.json());
       if (auditLogs.ok) this.auditLogs.set(await auditLogs.json());
+      if (plans.ok) this.plans.set(await plans.json());
     } catch {
       this.message.set('Admin workflow API is unavailable.');
     }
@@ -1029,8 +1068,46 @@ export class AdminPage implements OnInit {
     await this.post(`/api/users/${id}/status`, { status }, `User marked ${status}.`);
   }
 
+  protected async promoteUserToAdmin(id: string): Promise<void> {
+    await this.post(`/api/users/${id}/role`, { role: 'admin' }, 'User promoted to admin.');
+  }
+
   protected async updateVendor(id: string, body: Partial<{ status: VendorStatus; registrationStatus: RegistrationStatus }>): Promise<void> {
     await this.post(`/api/vendors/${id}/status`, body, 'Vendor updated.');
+  }
+
+  protected vendorPlanSelection(vendor: AdminVendor): string {
+    return this.vendorPlanDrafts[vendor.id]
+      || vendor.subscriptionPlanCode
+      || vendor.subscriptionPlanId
+      || this.planIdFromName(vendor.subscriptionPlan)
+      || this.plans()[0]?.id
+      || '';
+  }
+
+  protected setVendorPlanSelection(vendorId: string, planId: string): void {
+    this.vendorPlanDrafts = { ...this.vendorPlanDrafts, [vendorId]: planId };
+  }
+
+  protected vendorSubscriptionStatusSelection(vendor: AdminVendor): string {
+    return this.vendorSubscriptionStatusDrafts[vendor.id]
+      || vendor.subscriptionStatus
+      || 'active';
+  }
+
+  protected setVendorSubscriptionStatusSelection(vendorId: string, status: string): void {
+    this.vendorSubscriptionStatusDrafts = { ...this.vendorSubscriptionStatusDrafts, [vendorId]: status };
+  }
+
+  protected async updateVendorPlan(id: string): Promise<void> {
+    const vendor = this.adminVendors().find((item) => item.id === id);
+    const planId = vendor ? this.vendorPlanSelection(vendor) : this.plans()[0]?.id;
+    const status = vendor ? this.vendorSubscriptionStatusSelection(vendor) : 'active';
+    if (!planId) {
+      this.message.set('Subscription plans are not loaded yet.');
+      return;
+    }
+    await this.post(`/api/vendors/${id}/subscription`, { planId, status }, 'Vendor subscription updated.');
   }
 
   protected async updateRegistration(id: string, status: string): Promise<void> {
@@ -1144,6 +1221,10 @@ export class AdminPage implements OnInit {
     } catch {
       return String(log.details);
     }
+  }
+
+  private planIdFromName(name?: string): string {
+    return this.plans().find((plan) => plan.name === name)?.id || '';
   }
 
   private matches(fields: Array<string | number | undefined | null>): boolean {

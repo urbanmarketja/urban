@@ -23,6 +23,9 @@ import { formatCurrency } from './market-data';
 
         <section class="container section split-grid">
           <article class="dashboard-card">
+            @if (item.imageUrl) {
+              <div class="product-image service-detail-image has-photo"><img [src]="item.imageUrl" [alt]="item.name" loading="eager" decoding="async"></div>
+            }
             <h2>What's included</h2>
             <p>{{ item.details }}</p>
             <h2>Reviews</h2>

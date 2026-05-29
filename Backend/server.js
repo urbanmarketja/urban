@@ -187,6 +187,16 @@ function canPublishProducts(vendor) {
   return vendor.subscriptionStatus === 'active' && vendor.registrationStatus === 'registered';
 }
 
+function isStarterPlan(vendor) {
+  return String(vendor.subscriptionPlan || '').toLowerCase().includes('starter');
+}
+
+function isPublicVendor(vendor) {
+  return vendor.registrationStatus === 'registered'
+    && vendor.subscriptionStatus === 'active'
+    && !isStarterPlan(vendor);
+}
+
 function complianceAlertFor(vendor) {
   return {
     vendorId: vendor.id,
@@ -369,6 +379,29 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  const listingMediaMatch = url.pathname.match(/^\/api\/uploads\/listing-media\/([^/]+)$/);
+  if (req.method === 'GET' && listingMediaMatch) {
+    if (repository.isDatabaseEnabled()) {
+      try {
+        const download = repository.listingMediaDownload(listingMediaMatch[1]);
+        if (!download) {
+          sendJson(res, 404, { error: 'Listing image not found' });
+          return;
+        }
+        const file = await fs.readFile(download.filePath);
+        sendBinary(res, 200, file, download.contentType, {
+          'Cache-Control': 'public, max-age=86400'
+        });
+        return;
+      } catch {
+        sendJson(res, 404, { error: 'Listing image not found' });
+        return;
+      }
+    }
+    sendJson(res, 404, { error: 'Listing image not found' });
+    return;
+  }
+
   if (req.method === 'GET' && url.pathname === '/api/vendors') {
     if (repository.isDatabaseEnabled()) {
       try {
@@ -381,7 +414,7 @@ const server = http.createServer(async (req, res) => {
         return sendRouteError(res, error);
       }
     }
-    sendJson(res, 200, vendors.filter((vendor) => vendor.registrationStatus === 'registered').map(withEligibility));
+    sendJson(res, 200, vendors.filter(isPublicVendor).map(withEligibility));
     return;
   }
 
@@ -394,7 +427,7 @@ const server = http.createServer(async (req, res) => {
         return sendRouteError(res, error);
       }
     }
-    const registeredVendorIds = new Set(vendors.filter((vendor) => vendor.registrationStatus === 'registered').map((vendor) => vendor.id));
+    const registeredVendorIds = new Set(vendors.filter(isPublicVendor).map((vendor) => vendor.id));
     sendJson(res, 200, products.filter((product) => registeredVendorIds.has(product.vendorId)));
     return;
   }
@@ -606,7 +639,7 @@ const server = http.createServer(async (req, res) => {
         return sendRouteError(res, error);
       }
     }
-    const registeredVendorIds = new Set(vendors.filter((vendor) => vendor.registrationStatus === 'registered').map((vendor) => vendor.id));
+    const registeredVendorIds = new Set(vendors.filter(isPublicVendor).map((vendor) => vendor.id));
     sendJson(res, 200, foods.filter((food) => registeredVendorIds.has(food.vendorId)));
     return;
   }
@@ -622,7 +655,7 @@ const server = http.createServer(async (req, res) => {
         return sendRouteError(res, error);
       }
     }
-    const registeredVendorIds = new Set(vendors.filter((vendor) => vendor.registrationStatus === 'registered').map((vendor) => vendor.id));
+    const registeredVendorIds = new Set(vendors.filter(isPublicVendor).map((vendor) => vendor.id));
     sendJson(res, 200, jobs.filter((job) => job.isApproved && (!job.vendorId || registeredVendorIds.has(job.vendorId))));
     return;
   }
@@ -707,6 +740,41 @@ const server = http.createServer(async (req, res) => {
       return;
     }
     sendJson(res, 200, { ok: true });
+    return;
+  }
+
+  const userRoleMatch = url.pathname.match(/^\/api\/users\/([^/]+)\/role$/);
+  if (req.method === 'POST' && userRoleMatch) {
+    const authUser = requireRouteRoles(req, res, ['admin']);
+    if (!authUser) return;
+    if (repository.isDatabaseEnabled()) {
+      readJsonBody(req)
+        .then(async (body) => {
+          if (body.role !== 'admin') {
+            sendJson(res, 400, { error: 'Only admin promotion is supported from this screen' });
+            return;
+          }
+          const user = await repository.promoteUserToAdmin(userRoleMatch[1]);
+          await repository.recordAdminAudit({
+            adminUserId: authUser.sub,
+            action: 'user_role_promote_admin',
+            entityType: 'user',
+            entityId: userRoleMatch[1],
+            details: { role: user.role, status: user.status }
+          });
+          sendJson(res, 200, user);
+        })
+        .catch((error) => sendJson(res, error.statusCode || 400, { error: error.message || 'Invalid JSON body' }));
+      return;
+    }
+    const user = users.find((item) => item.id === userRoleMatch[1]);
+    if (!user) {
+      sendJson(res, 404, { error: 'User not found' });
+      return;
+    }
+    user.role = 'admin';
+    user.status = 'active';
+    sendJson(res, 200, user);
     return;
   }
 
@@ -953,7 +1021,7 @@ const server = http.createServer(async (req, res) => {
         return sendRouteError(res, error);
       }
     }
-    const vendor = vendors.find((item) => item.slug === vendorMatch[1] && item.registrationStatus === 'registered');
+    const vendor = vendors.find((item) => item.slug === vendorMatch[1] && isPublicVendor(item));
     if (!vendor) {
       sendJson(res, 404, { error: 'Vendor not found' });
       return;
@@ -1034,6 +1102,51 @@ const server = http.createServer(async (req, res) => {
       return;
     }
     sendJson(res, 200, { ok: true });
+    return;
+  }
+
+  const vendorSubscriptionMatch = url.pathname.match(/^\/api\/vendors\/([^/]+)\/subscription$/);
+  if (req.method === 'POST' && vendorSubscriptionMatch) {
+    const authUser = requireRouteRoles(req, res, ['admin']);
+    if (!authUser) return;
+    if (repository.isDatabaseEnabled()) {
+      readJsonBody(req)
+        .then(async (body) => {
+          const vendor = await repository.updateVendorSubscription(vendorSubscriptionMatch[1], body);
+          await repository.recordAdminAudit({
+            adminUserId: authUser.sub,
+            action: 'vendor_subscription_update',
+            entityType: 'vendor',
+            entityId: vendorSubscriptionMatch[1],
+            details: {
+              planId: body.planId,
+              status: body.status || 'active',
+              subscriptionPlan: vendor.subscriptionPlan,
+              subscriptionStatus: vendor.subscriptionStatus
+            }
+          });
+          sendJson(res, 200, vendor);
+        })
+        .catch((error) => sendJson(res, error.statusCode || 400, { error: error.message || 'Invalid JSON body' }));
+      return;
+    }
+    readJsonBody(req)
+      .then((body) => {
+        const vendor = vendors.find((item) => item.id === vendorSubscriptionMatch[1]);
+        const plan = subscriptionPlans.find((item) => item.id === body.planId);
+        if (!vendor || !plan) {
+          sendJson(res, 400, { error: 'Vendor subscription update requires a valid vendor and plan' });
+          return;
+        }
+        const nextBilling = new Date();
+        nextBilling.setMonth(nextBilling.getMonth() + 1);
+        vendor.subscriptionPlan = plan.name;
+        vendor.subscriptionStatus = ['trial', 'active', 'past_due', 'cancelled'].includes(body.status) ? body.status : 'active';
+        vendor.lastPaymentAt = vendor.subscriptionStatus === 'active' ? new Date().toISOString() : vendor.lastPaymentAt;
+        vendor.nextBillingAt = nextBilling.toISOString().split('T')[0];
+        sendJson(res, 200, vendor);
+      })
+      .catch(() => sendJson(res, 400, { error: 'Invalid JSON body' }));
     return;
   }
 
@@ -1571,7 +1684,7 @@ const server = http.createServer(async (req, res) => {
         sendJson(res, 403, { error: 'Vendor account cannot manage this product' });
         return;
       }
-      readJsonBody(req)
+      readJsonBody(req, 12000000)
         .then((body) => repository.createProductImage(productImageMatch[1], body))
         .then((image) => sendJson(res, 201, image))
         .catch((error) => sendJson(res, error.statusCode || 400, { error: error.message || 'Invalid JSON body' }));
@@ -1591,9 +1704,29 @@ const server = http.createServer(async (req, res) => {
         sendJson(res, 403, { error: 'Vendor account cannot manage this store' });
         return;
       }
-      readJsonBody(req)
+      readJsonBody(req, 12000000)
         .then((body) => repository.createStoreMedia(storeMediaMatch[1], body))
         .then((media) => sendJson(res, 201, media))
+        .catch((error) => sendJson(res, error.statusCode || 400, { error: error.message || 'Invalid JSON body' }));
+      return;
+    }
+    sendJson(res, 201, { ok: true });
+    return;
+  }
+
+  const serviceImageMatch = url.pathname.match(/^\/api\/services\/([^/]+)\/images$/);
+  if (req.method === 'POST' && serviceImageMatch) {
+    const authUser = requireRouteRoles(req, res, ['vendor', 'admin']);
+    if (!authUser) return;
+    if (repository.isDatabaseEnabled()) {
+      const vendorId = await repository.vendorIdForService(serviceImageMatch[1]);
+      if (!await authorizeVendorTarget(authUser, vendorId)) {
+        sendJson(res, 403, { error: 'Vendor account cannot manage this service' });
+        return;
+      }
+      readJsonBody(req, 12000000)
+        .then((body) => repository.createServiceImage(serviceImageMatch[1], body))
+        .then((image) => sendJson(res, 201, image))
         .catch((error) => sendJson(res, error.statusCode || 400, { error: error.message || 'Invalid JSON body' }));
       return;
     }
@@ -1879,7 +2012,7 @@ const server = http.createServer(async (req, res) => {
         return sendRouteError(res, error);
       }
     }
-    const registeredVendorIds = new Set(vendors.filter((vendor) => vendor.registrationStatus === 'registered').map((vendor) => vendor.id));
+    const registeredVendorIds = new Set(vendors.filter(isPublicVendor).map((vendor) => vendor.id));
     const job = jobs.find((item) => item.id === jobMatch[1] && item.isApproved && (!item.vendorId || registeredVendorIds.has(item.vendorId)));
     if (!job) {
       sendJson(res, 404, { error: 'Job not found' });
@@ -2094,7 +2227,7 @@ const server = http.createServer(async (req, res) => {
     }
     readJsonBody(req, 8000000)
       .then((body) => {
-        const registeredVendorIds = new Set(vendors.filter((vendor) => vendor.registrationStatus === 'registered').map((vendor) => vendor.id));
+        const registeredVendorIds = new Set(vendors.filter(isPublicVendor).map((vendor) => vendor.id));
         const job = jobs.find((item) => item.id === applyMatch[1] && item.isApproved && (!item.vendorId || registeredVendorIds.has(item.vendorId)));
         if (!job || !body.applicantName || !body.phone) {
           sendJson(res, 400, { error: 'Application requires job, applicant name, and phone' });
@@ -2291,7 +2424,7 @@ const server = http.createServer(async (req, res) => {
           sendJson(res, 400, { error: 'Order must include at least one item' });
           return;
         }
-        const registeredVendorIds = new Set(vendors.filter((vendor) => vendor.registrationStatus === 'registered').map((vendor) => vendor.id));
+        const registeredVendorIds = new Set(vendors.filter(isPublicVendor).map((vendor) => vendor.id));
         if (items.some((item) => !registeredVendorIds.has(String(item.vendorId || '')))) {
           sendJson(res, 409, { error: 'One or more items are no longer available because the store is not registered.' });
           return;

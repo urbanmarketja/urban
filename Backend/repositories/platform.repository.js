@@ -593,7 +593,7 @@ async function listVendors(activeOnly = true, registeredOnly = false) {
   const where = [
     activeOnly ? "v.status = 'active'" : '',
     registeredOnly ? "v.registration_status = 'registered'" : '',
-    registeredOnly ? "st.status = 'active'" : '',
+    registeredOnly ? "(st.id IS NULL OR st.status NOT IN ('paused', 'suspended'))" : '',
     registeredOnly ? "sub.status = 'active'" : '',
     registeredOnly ? "COALESCE(plan.code, 'starter') <> 'starter'" : ''
   ].filter(Boolean);
@@ -687,7 +687,7 @@ async function listProducts() {
     FROM products p
     JOIN vendors v ON v.id = p.vendor_id
     ${publicVendorSubscriptionJoin()}
-    JOIN stores st ON st.id = p.store_id AND st.status = 'active'
+    JOIN stores st ON st.id = p.store_id AND st.status NOT IN ('paused', 'suspended')
     ${primaryProductImageJoin()}
     LEFT JOIN (
       SELECT product_id AS productId, MAX(ends_at) AS featuredUntil
@@ -754,7 +754,7 @@ async function listServices() {
     FROM services s
     JOIN vendors v ON v.id = s.vendor_id
     ${publicVendorSubscriptionJoin()}
-    JOIN stores st ON st.id = s.store_id AND st.status = 'active'
+    JOIN stores st ON st.id = s.store_id AND st.status NOT IN ('paused', 'suspended')
     ${primaryServiceImageJoin()}
     WHERE s.status = 'published'
       AND v.status = 'active'
@@ -782,7 +782,7 @@ async function listFoods() {
     FROM products p
     JOIN vendors v ON v.id = p.vendor_id
     ${publicVendorSubscriptionJoin()}
-    JOIN stores st ON st.id = p.store_id AND st.status = 'active'
+    JOIN stores st ON st.id = p.store_id AND st.status NOT IN ('paused', 'suspended')
     ${primaryProductImageJoin()}
     WHERE p.type = 'food'
       AND p.status = 'published'
@@ -1170,7 +1170,7 @@ async function cartItemsForCart(cartId) {
     JOIN products p ON p.id = ci.product_id
     JOIN vendors v ON v.id = ci.vendor_id
     ${publicVendorSubscriptionJoin()}
-    JOIN stores st ON st.id = ci.store_id AND st.status = 'active'
+    JOIN stores st ON st.id = ci.store_id AND st.status NOT IN ('paused', 'suspended')
     WHERE ci.cart_id = :cartId
       AND p.status = 'published'
       AND v.status = 'active'
@@ -1214,7 +1214,7 @@ async function addCartItem(customerUserId, { productId, qty = 1 }) {
     FROM products p
     JOIN vendors v ON v.id = p.vendor_id
     ${publicVendorSubscriptionJoin()}
-    JOIN stores st ON st.id = p.store_id AND st.status = 'active'
+    JOIN stores st ON st.id = p.store_id AND st.status NOT IN ('paused', 'suspended')
     WHERE p.id = :productId
       AND p.status = 'published'
       AND v.status = 'active'
@@ -1263,7 +1263,7 @@ async function updateCartItem(customerUserId, productId, qty) {
     FROM products p
     JOIN vendors v ON v.id = p.vendor_id
     ${publicVendorSubscriptionJoin()}
-    JOIN stores st ON st.id = p.store_id AND st.status = 'active'
+    JOIN stores st ON st.id = p.store_id AND st.status NOT IN ('paused', 'suspended')
     WHERE p.id = :productId
       AND p.status = 'published'
       AND v.status = 'active'
@@ -1713,7 +1713,7 @@ async function createOrder({ customer = {}, paymentMethod = 'Dime', items = [] }
           FROM products p
           JOIN vendors v ON v.id = p.vendor_id
           ${publicVendorSubscriptionJoin()}
-          JOIN stores st ON st.id = p.store_id AND st.status = 'active'
+          JOIN stores st ON st.id = p.store_id AND st.status NOT IN ('paused', 'suspended')
           WHERE p.id = :id
             AND p.status = 'published'
             AND v.status = 'active'
@@ -1739,7 +1739,7 @@ async function createOrder({ customer = {}, paymentMethod = 'Dime', items = [] }
           WHERE v.id = :vendorId
             AND v.status = 'active'
             AND v.registration_status = 'registered'
-            AND st.status = 'active'
+            AND st.status NOT IN ('paused', 'suspended')
             AND (:storeId IS NULL OR st.id = :storeId)
           ORDER BY st.created_at
           LIMIT 1
@@ -2447,13 +2447,13 @@ async function assertStorePublishAllowed(storeId, vendorId, action = 'publish') 
     };
     throw error;
   }
-  if (store.status !== 'active') {
-    const error = new Error(`Vendor cannot ${action} until the store status is active`);
+  if (['paused', 'suspended'].includes(store.status)) {
+    const error = new Error(`Vendor cannot ${action} while the store is ${store.status}`);
     error.statusCode = 403;
     error.compliance = {
       severity: 'notice',
-      message: 'Set the store status to active before products, foods, or services can appear publicly.',
-      eligibility: { canSell: false, reason: 'active_store_required_for_public_listing' }
+      message: 'Resume the store before products, foods, or services can appear publicly.',
+      eligibility: { canSell: false, reason: 'store_paused_or_suspended' }
     };
     throw error;
   }

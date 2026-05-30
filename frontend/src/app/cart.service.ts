@@ -30,7 +30,9 @@ export class CartService {
   readonly total = computed(() => this.itemsSignal().reduce((sum, item) => sum + item.price * item.qty, 0));
 
   constructor() {
-    void this.refresh();
+    if (this.shouldSync()) {
+      void this.refresh();
+    }
   }
 
   async addProduct(product: Product): Promise<void> {
@@ -108,6 +110,10 @@ export class CartService {
   }
 
   async refresh(): Promise<void> {
+    if (!this.shouldSync()) {
+      this.errorSignal.set('');
+      return;
+    }
     try {
       const response = await fetch(apiUrl('/api/cart'), { headers: this.auth.authHeaders() });
       if (!response.ok) return;

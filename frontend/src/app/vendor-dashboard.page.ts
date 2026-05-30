@@ -1648,8 +1648,8 @@ export class VendorDashboardPage implements OnInit {
     if (!store) {
       return 'Create a store profile before products, foods, or services can appear publicly.';
     }
-    if (store.status !== 'active') {
-      return 'Set the store status to active before products, foods, or services can appear publicly.';
+    if (this.isStorePaused(store)) {
+      return 'Resume this store before products, foods, or services can appear publicly.';
     }
     if (vendor.subscriptionStatus === 'past_due') {
       return 'Subscription is past due. Product publishing is paused until payment is restored.';
@@ -1672,7 +1672,7 @@ export class VendorDashboardPage implements OnInit {
   protected severity(vendor: VendorRecord | null): string {
     if (!vendor) return 'notice';
     const store = this.activeStore();
-    if (!store || store.status !== 'active') return 'notice';
+    if (!store || this.isStorePaused(store)) return 'notice';
     if (vendor.subscriptionStatus === 'past_due') return 'critical';
     if (vendor.subscriptionStatus !== 'active' || this.isStarterPlan(vendor)) return 'notice';
     if (vendor.registrationStatus === 'registered') return 'ok';
@@ -1684,7 +1684,7 @@ export class VendorDashboardPage implements OnInit {
     const store = this.activeStore();
     return !!vendor
       && !!store
-      && store.status === 'active'
+      && !this.isStorePaused(store)
       && vendor.subscriptionStatus === 'active'
       && vendor.registrationStatus === 'registered'
       && !this.isStarterPlan(vendor);
@@ -1695,7 +1695,7 @@ export class VendorDashboardPage implements OnInit {
     const store = this.activeStore();
     if (!vendor) return 'Vendor data is still loading.';
     if (!store) return 'Create and save a store profile before publishing.';
-    if (store.status !== 'active') return 'Set the store status to active before publishing or showing listings in the marketplace.';
+    if (this.isStorePaused(store)) return 'Resume this store before publishing or showing listings in the marketplace.';
     if (vendor.subscriptionStatus === 'past_due') return 'Subscription is past due. Restore the subscription before publishing.';
     if (vendor.subscriptionStatus !== 'active') return 'Activate a vendor subscription before publishing.';
     if (this.isStarterPlan(vendor)) return 'Starter plan is private setup only. Choose Growth or Pro before publishing.';
@@ -1706,6 +1706,10 @@ export class VendorDashboardPage implements OnInit {
   private isStarterPlan(vendor: VendorRecord | null): boolean {
     const plan = String(vendor?.subscriptionPlanCode || vendor?.subscriptionPlan || '').toLowerCase();
     return plan === 'starter' || plan.includes('starter');
+  }
+
+  private isStorePaused(store: VendorStore | null): boolean {
+    return ['paused', 'suspended'].includes(String(store?.status || '').toLowerCase());
   }
 
   private unregisteredExpiry(vendor: VendorRecord): Date {

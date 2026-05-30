@@ -1,5 +1,6 @@
 import { Component, OnInit, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
+import { RouterLink } from '@angular/router';
 import { apiUrl } from './api-url';
 import { AuthService } from './auth.service';
 
@@ -15,7 +16,7 @@ interface AccountProfile {
 
 @Component({
   selector: 'app-profile-page',
-  imports: [FormsModule],
+  imports: [FormsModule, RouterLink],
   template: `
     <main>
       <section class="page-hero">
@@ -26,8 +27,10 @@ interface AccountProfile {
         </div>
       </section>
 
-      <section class="container section">
+      <section class="container section profile-layout">
         <form class="profile-form" (ngSubmit)="saveProfile()">
+          <h2>Account details</h2>
+          <p class="product-meta">Keep your contact details current for orders, alerts, and account access.</p>
           <label>
             Full name
             <input name="name" [(ngModel)]="profile.name" required>
@@ -43,7 +46,12 @@ interface AccountProfile {
           @if (profile.role === 'customer') {
             <label>
               Parish
-              <input name="parish" [(ngModel)]="profile.parish">
+              <select name="parish" [(ngModel)]="profile.parish">
+                <option value="">Select parish</option>
+                @for (parish of parishOptions; track parish) {
+                  <option [value]="parish">{{ parish }}</option>
+                }
+              </select>
             </label>
           }
           <label>
@@ -55,6 +63,24 @@ interface AccountProfile {
             <div class="notice" [class.error]="isError()">{{ message() }}</div>
           }
         </form>
+
+        <aside class="dashboard-card account-context-card">
+          <span class="product-tag">{{ roleLabel() }}</span>
+          <h2>{{ accountHeading() }}</h2>
+          <p>{{ accountDescription() }}</p>
+          <div class="account-action-grid">
+            <a class="button primary-button" [routerLink]="dashboardLink()">{{ dashboardLabel() }}</a>
+            @if (profile.role === 'vendor') {
+              <a class="button outline-button" routerLink="/vendor-dashboard">Edit store location</a>
+            }
+            @if (profile.role === 'customer') {
+              <a class="button outline-button" routerLink="/user-dashboard">Delivery addresses</a>
+            }
+            @if (profile.role === 'admin') {
+              <a class="button outline-button" routerLink="/admin">Manage vendors</a>
+            }
+          </div>
+        </aside>
       </section>
     </main>
   `
@@ -64,6 +90,7 @@ export class ProfilePage implements OnInit {
   protected readonly message = signal('');
   protected readonly isError = signal(false);
   protected readonly isSaving = signal(false);
+  protected readonly parishOptions = ['Kingston', 'St. Andrew', 'St. Catherine', 'Clarendon', 'Manchester', 'St. Elizabeth', 'Westmoreland', 'Hanover', 'St. James', 'Trelawny', 'St. Ann', 'St. Mary', 'Portland', 'St. Thomas'];
 
   protected profile: AccountProfile = {
     name: '',
@@ -125,5 +152,33 @@ export class ProfilePage implements OnInit {
     } finally {
       this.isSaving.set(false);
     }
+  }
+
+  protected roleLabel(): string {
+    return this.profile.role ? this.profile.role : 'account';
+  }
+
+  protected dashboardLink(): string {
+    if (this.profile.role === 'vendor') return '/vendor-dashboard';
+    if (this.profile.role === 'admin') return '/admin';
+    return '/user-dashboard';
+  }
+
+  protected dashboardLabel(): string {
+    if (this.profile.role === 'vendor') return 'Open vendor dashboard';
+    if (this.profile.role === 'admin') return 'Open admin dashboard';
+    return 'Open customer dashboard';
+  }
+
+  protected accountHeading(): string {
+    if (this.profile.role === 'vendor') return 'Vendor workspace';
+    if (this.profile.role === 'admin') return 'Platform management';
+    return 'Customer account';
+  }
+
+  protected accountDescription(): string {
+    if (this.profile.role === 'vendor') return 'Manage store profile, location, listings, orders, subscriptions, and payout details from your vendor dashboard.';
+    if (this.profile.role === 'admin') return 'Review users, vendors, registrations, listings, orders, plans, and platform finance activity from the admin dashboard.';
+    return 'Manage saved delivery addresses, orders, alerts, reviews, and checkout details from your customer dashboard.';
   }
 }

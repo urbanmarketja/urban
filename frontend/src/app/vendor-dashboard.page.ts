@@ -411,26 +411,53 @@ interface ListingImageUpload {
             @if (activeTab() === 'store') {
               <section class="vendor-panel split-grid">
                 <form class="profile-form" (ngSubmit)="saveStore()">
-                  <h2>Store Profile</h2>
-                  <label>Store name <input name="storeName" [(ngModel)]="storeForm.name" required></label>
-                  <label>Public URL slug <input name="storeSlug" [(ngModel)]="storeForm.slug" required></label>
-                  <label>Location label <input name="storeLocation" [(ngModel)]="storeForm.location" placeholder="Half Way Tree, Portmore, Spanish Town"></label>
-                  <label>Street or pickup address <input name="storeAddressLine1" [(ngModel)]="storeForm.addressLine1" placeholder="Street, plaza, shop number, or pickup point"></label>
-                  <label>Address line 2 <input name="storeAddressLine2" [(ngModel)]="storeForm.addressLine2" placeholder="Suite, unit, landmark"></label>
-                  <label>Parish <input name="storeParish" [(ngModel)]="storeForm.parish" placeholder="Kingston, St. Catherine, St. Andrew"></label>
-                  <div class="form-grid compact-form">
-                    <label>Latitude <input name="storeLatitude" type="number" step="any" [(ngModel)]="storeForm.latitude" placeholder="18.0125"></label>
-                    <label>Longitude <input name="storeLongitude" type="number" step="any" [(ngModel)]="storeForm.longitude" placeholder="-76.7981"></label>
+                  <div class="form-section">
+                    <h2>Store profile</h2>
+                    <p class="product-meta">This is what customers see on your storefront and marketplace listings.</p>
+                    <label>Store name <input name="storeName" [(ngModel)]="storeForm.name" required></label>
+                    <label>Public URL slug <input name="storeSlug" [(ngModel)]="storeForm.slug" required></label>
+                    <label>Status <select name="storeStatus" [(ngModel)]="storeForm.status"><option>draft</option><option>active</option><option>paused</option></select></label>
+                    <label>Summary <textarea name="storeSummary" [(ngModel)]="storeForm.summary" rows="4" placeholder="Tell customers what your store offers"></textarea></label>
                   </div>
-                  <button class="button outline-button" type="button" (click)="useCurrentLocationForStore()">Use current location for map</button>
-                  <label>Status <select name="storeStatus" [(ngModel)]="storeForm.status"><option>draft</option><option>active</option><option>paused</option></select></label>
-                  <label>Summary <textarea name="storeSummary" [(ngModel)]="storeForm.summary" rows="4" placeholder="Tell customers what your store offers"></textarea></label>
+
+                  <div class="form-section">
+                    <h3>Location and map</h3>
+                    <p class="product-meta">Saved coordinates power the customer distance estimate and Directions button.</p>
+                    <label>Location area
+                      <input name="storeLocation" list="storeLocationOptions" [(ngModel)]="storeForm.location" placeholder="Half Way Tree, Portmore, Spanish Town">
+                    </label>
+                    <datalist id="storeLocationOptions">
+                      @for (location of popularLocations; track location) {
+                        <option [value]="location"></option>
+                      }
+                    </datalist>
+                    <label>Street or pickup address <input name="storeAddressLine1" [(ngModel)]="storeForm.addressLine1" placeholder="Street, plaza, shop number, or pickup point"></label>
+                    <label>Address line 2 <input name="storeAddressLine2" [(ngModel)]="storeForm.addressLine2" placeholder="Suite, unit, landmark"></label>
+                    <label>Parish
+                      <select name="storeParish" [(ngModel)]="storeForm.parish">
+                        <option value="">Select parish</option>
+                        @for (parish of parishOptions; track parish) {
+                          <option [value]="parish">{{ parish }}</option>
+                        }
+                      </select>
+                    </label>
+                    <div class="form-grid compact-form">
+                      <label>Latitude <input name="storeLatitude" type="number" step="any" [(ngModel)]="storeForm.latitude" placeholder="18.0125"></label>
+                      <label>Longitude <input name="storeLongitude" type="number" step="any" [(ngModel)]="storeForm.longitude" placeholder="-76.7981"></label>
+                    </div>
+                    <div class="location-actions">
+                      <button class="button outline-button" type="button" (click)="useCurrentLocationForStore()">Use live location</button>
+                      <span class="product-meta">{{ coordinateStatus() }}</span>
+                    </div>
+                  </div>
+
                   <button class="button primary-button" type="submit">Save store</button>
                 </form>
 
                 <article class="dashboard-card">
-                  <h2>Share Tools</h2>
+                  <h2>Share tools</h2>
                   @if (activeStore()?.slug) {
+                    <p class="product-meta">These links update for the selected store.</p>
                     <p>{{ storeUrl() }}</p>
                     <div class="share-actions">
                       <button class="button secondary-button" type="button" (click)="copyStoreLink()">{{ copyLabel() }}</button>
@@ -780,6 +807,8 @@ export class VendorDashboardPage implements OnInit {
   protected selectedVendorId = '';
   protected readonly copyLabel = signal('Copy link');
   protected readonly selectedCheckoutRequestId = signal('');
+  protected readonly parishOptions = ['Kingston', 'St. Andrew', 'St. Catherine', 'Clarendon', 'Manchester', 'St. Elizabeth', 'Westmoreland', 'Hanover', 'St. James', 'Trelawny', 'St. Ann', 'St. Mary', 'Portland', 'St. Thomas'];
+  protected readonly popularLocations = ['Half Way Tree', 'New Kingston', 'Downtown Kingston', 'Portmore', 'Spanish Town', 'May Pen', 'Mandeville', 'Montego Bay', 'Ocho Rios', 'Negril', 'Savanna-la-Mar', 'Linstead', 'Old Harbour', 'Morant Bay'];
 
   protected readonly tabs: Array<{ value: VendorTab; label: string }> = [
     { value: 'overview', label: 'Overview' },
@@ -1461,17 +1490,30 @@ export class VendorDashboardPage implements OnInit {
   }
 
   protected storeUrl(): string {
-    const slug = this.activeStore()?.slug ?? '';
+    const slug = this.activeStore()?.slug || this.storeForm.slug || '';
     if (typeof window === 'undefined') return `/vendor/${slug}`;
     return `${window.location.origin}/vendor/${slug}`;
   }
 
+  protected shareStoreName(): string {
+    return this.activeStore()?.name || this.storeForm.name || 'this Urban Market JA store';
+  }
+
   protected whatsappShare(): string {
-    return `https://wa.me/?text=${encodeURIComponent(`Shop my Urban Market JA store: ${this.storeUrl()}`)}`;
+    return `https://wa.me/?text=${encodeURIComponent(`Check out ${this.shareStoreName()} on Urban Market JA: ${this.storeUrl()}`)}`;
   }
 
   protected facebookShare(): string {
     return `https://www.facebook.com/sharer/sharer.php?u=${encodeURIComponent(this.storeUrl())}`;
+  }
+
+  protected coordinateStatus(): string {
+    const latitude = this.storeForm.latitude;
+    const longitude = this.storeForm.longitude;
+    if (latitude === null || latitude === undefined || longitude === null || longitude === undefined) {
+      return 'No map coordinates saved yet.';
+    }
+    return `Map point set: ${Number(latitude).toFixed(6)}, ${Number(longitude).toFixed(6)}`;
   }
 
   protected async copyStoreLink(): Promise<void> {

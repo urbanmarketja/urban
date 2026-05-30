@@ -205,7 +205,9 @@ export class VendorStorePage implements OnInit {
   }
 
   protected whatsappShare(): string {
-    return `https://wa.me/?text=${encodeURIComponent(`Shop my Urban Market JA store: ${this.storeUrl()}`)}`;
+    const store = this.vendor();
+    const name = store?.name || 'this Urban Market JA store';
+    return `https://wa.me/?text=${encodeURIComponent(`Check out ${name} on Urban Market JA: ${this.storeUrl()}`)}`;
   }
 
   protected facebookShare(): string {

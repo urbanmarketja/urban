@@ -23,6 +23,25 @@ interface VendorStore {
   status: string;
 }
 
+interface StoreMediaRecord {
+  id: string;
+  storeId: string;
+  mediaType: string;
+  url: string;
+  altText?: string;
+  sortOrder?: number;
+}
+
+interface StoreSocialLink {
+  id?: string;
+  storeId?: string;
+  platform: string;
+  label?: string;
+  url: string;
+  status?: string;
+  sortOrder?: number;
+}
+
 interface VendorRecord {
   id: string;
   name: string;
@@ -85,7 +104,7 @@ interface ListingImageUpload {
                 @if (activeStore()?.slug && canPublish(activeVendor())) {
                   <a class="button secondary-button" [routerLink]="['/vendor', activeStore()?.slug]">View public store</a>
                 } @else if (activeStore()?.slug) {
-                  <span class="action-note">Public store opens after registration</span>
+                  <span class="action-note">{{ publishReadinessMessage() }}</span>
                 }
               </div>
             </div>
@@ -466,6 +485,7 @@ interface ListingImageUpload {
                     </div>
                   }
                   <h3>Store media</h3>
+                  <p class="product-meta">Upload a logo for the store badge, a banner for the storefront hero, and gallery images for store media.</p>
                   <form class="profile-form compact-form" (ngSubmit)="addMedia()">
                     <label>Media URL <input name="mediaUrl" [(ngModel)]="mediaForm.url" placeholder="https://..."></label>
                     <label>Media type <select name="mediaType" [(ngModel)]="mediaForm.mediaType"><option>logo</option><option>banner</option><option>gallery</option></select></label>
@@ -476,6 +496,44 @@ interface ListingImageUpload {
                     <p class="product-meta">{{ imageFileLabel(mediaImageForm, 'Optional JPG, PNG, WEBP, HEIC, or HEIF image up to 8 MB.') }}</p>
                     <button class="button secondary-button" type="submit">Add media</button>
                   </form>
+                  @if (storeMedia().length) {
+                    <div class="store-media-preview-grid">
+                      @for (media of storeMedia(); track media.id) {
+                        <figure>
+                          <img [src]="media.url" [alt]="media.altText || media.mediaType">
+                          <figcaption>{{ media.mediaType }}</figcaption>
+                        </figure>
+                      }
+                    </div>
+                  }
+
+                  <h3>Social media accounts</h3>
+                  <p class="product-meta">Add accounts customers should see under Follow us on your store page.</p>
+                  <form class="profile-form compact-form" (ngSubmit)="saveSocialLink()">
+                    <label>Platform
+                      <select name="socialPlatform" [(ngModel)]="socialForm.platform">
+                        @for (platform of socialPlatforms; track platform.value) {
+                          <option [value]="platform.value">{{ platform.label }}</option>
+                        }
+                      </select>
+                    </label>
+                    <label>Handle, phone, or URL <input name="socialUrl" [(ngModel)]="socialForm.url" placeholder="@store, 1876..., or https://..." required></label>
+                    <label>Display label <input name="socialLabel" [(ngModel)]="socialForm.label" placeholder="Follow us"></label>
+                    <button class="button secondary-button" type="submit">Save social account</button>
+                  </form>
+                  @if (storeSocialLinks().length) {
+                    <div class="social-link-list">
+                      @for (link of storeSocialLinks(); track link.platform) {
+                        <div class="social-link-row">
+                          <a [href]="link.url" target="_blank" rel="noopener">
+                            <span class="social-icon" [attr.data-platform]="link.platform">{{ socialIcon(link.platform) }}</span>
+                            <span>{{ link.label || socialName(link.platform) }}</span>
+                          </a>
+                          <button class="button-sm danger" type="button" (click)="removeSocialLink(link)">Remove</button>
+                        </div>
+                      }
+                    </div>
+                  }
                 </article>
               </section>
             }
@@ -491,8 +549,8 @@ interface ListingImageUpload {
                 <form class="profile-form wide-form" (ngSubmit)="createListing()">
                   @if (!canPublish(activeVendor())) {
                     <div class="notice">
-                      <strong>Registration required before public listing</strong>
-                      <p>You can save drafts now. Products and foods will not be published or shown in the marketplace until this business is registered.</p>
+                      <strong>Publishing paused</strong>
+                      <p>{{ publishReadinessMessage() }}</p>
                     </div>
                   }
                   <div class="form-grid">
@@ -592,8 +650,8 @@ interface ListingImageUpload {
                 <form class="profile-form wide-form" (ngSubmit)="createService()">
                   @if (!canPublish(activeVendor())) {
                     <div class="notice">
-                      <strong>Registration required before public service booking</strong>
-                      <p>You can save service drafts now. Services will not be published or bookable until this business is registered.</p>
+                      <strong>Publishing paused</strong>
+                      <p>{{ publishReadinessMessage() }}</p>
                     </div>
                   }
                   <div class="form-grid">
@@ -809,6 +867,15 @@ export class VendorDashboardPage implements OnInit {
   protected readonly selectedCheckoutRequestId = signal('');
   protected readonly parishOptions = ['Kingston', 'St. Andrew', 'St. Catherine', 'Clarendon', 'Manchester', 'St. Elizabeth', 'Westmoreland', 'Hanover', 'St. James', 'Trelawny', 'St. Ann', 'St. Mary', 'Portland', 'St. Thomas'];
   protected readonly popularLocations = ['Half Way Tree', 'New Kingston', 'Downtown Kingston', 'Portmore', 'Spanish Town', 'May Pen', 'Mandeville', 'Montego Bay', 'Ocho Rios', 'Negril', 'Savanna-la-Mar', 'Linstead', 'Old Harbour', 'Morant Bay'];
+  protected readonly socialPlatforms = [
+    { value: 'facebook', label: 'Facebook' },
+    { value: 'instagram', label: 'Instagram' },
+    { value: 'whatsapp', label: 'WhatsApp' },
+    { value: 'tiktok', label: 'TikTok' },
+    { value: 'x', label: 'X' },
+    { value: 'youtube', label: 'YouTube' },
+    { value: 'website', label: 'Website' }
+  ];
 
   protected readonly tabs: Array<{ value: VendorTab; label: string }> = [
     { value: 'overview', label: 'Overview' },
@@ -853,6 +920,7 @@ export class VendorDashboardPage implements OnInit {
   protected listingForm = { type: 'product', name: '', price: null as number | null, stockQuantity: null as number | null, deliveryDay: '', status: 'draft', description: '' };
   protected serviceForm = { name: '', category: '', price: null as number | null, pricingType: 'Fixed', status: 'draft', description: '' };
   protected mediaForm = { mediaType: 'gallery', url: '' };
+  protected socialForm = { platform: 'facebook', label: '', url: '', status: 'active' };
   protected mediaImageForm: ListingImageUpload = this.emptyImageForm();
   protected listingImageForm: ListingImageUpload = this.emptyImageForm();
   protected serviceImageForm: ListingImageUpload = this.emptyImageForm();
@@ -917,6 +985,7 @@ export class VendorDashboardPage implements OnInit {
       };
     }
     this.mediaForm = { mediaType: 'gallery', url: '' };
+    this.socialForm = { platform: 'facebook', label: '', url: '', status: 'active' };
     this.mediaImageForm = this.emptyImageForm();
     this.listingImageForm = this.emptyImageForm();
     this.serviceImageForm = this.emptyImageForm();
@@ -991,6 +1060,20 @@ export class VendorDashboardPage implements OnInit {
     return (this.operations()?.notifications ?? []).filter((notification: any) => !notification.vendorId || notification.vendorId === this.selectedVendorId);
   }
 
+  protected storeMedia(): StoreMediaRecord[] {
+    const storeId = this.activeStore()?.id;
+    return ((this.operations()?.media ?? []) as StoreMediaRecord[])
+      .filter((media) => media.storeId === storeId)
+      .map((media) => ({ ...media, url: this.mediaUrl(media.url) }));
+  }
+
+  protected storeSocialLinks(): StoreSocialLink[] {
+    const storeId = this.activeStore()?.id;
+    return ((this.operations()?.socialLinks ?? []) as StoreSocialLink[])
+      .filter((link) => link.storeId === storeId && link.status !== 'hidden')
+      .sort((a, b) => Number(a.sortOrder || 0) - Number(b.sortOrder || 0));
+  }
+
   protected publishedProductCount(): number {
     return this.vendorProducts().filter((product) => product.status === 'published').length;
   }
@@ -1040,7 +1123,7 @@ export class VendorDashboardPage implements OnInit {
 
   protected async createListing(): Promise<void> {
     if (this.listingForm.status === 'published' && !this.canPublish(this.activeVendor())) {
-      this.message.set('Business registration is required before products or foods can be published.');
+      this.message.set(this.publishReadinessMessage());
       return;
     }
     const hadListingImage = Boolean(this.listingImageForm.imageDataBase64);
@@ -1067,7 +1150,7 @@ export class VendorDashboardPage implements OnInit {
 
   protected async updateProductStatus(product: any, status: string): Promise<void> {
     if (status === 'published' && !this.canPublish(this.activeVendor())) {
-      this.message.set('Business registration is required before products or foods can be published.');
+      this.message.set(this.publishReadinessMessage());
       return;
     }
     await this.post(`/api/products/${product.id}`, { status }, `Listing marked ${status}.`);
@@ -1075,7 +1158,7 @@ export class VendorDashboardPage implements OnInit {
 
   protected async createService(): Promise<void> {
     if (this.serviceForm.status === 'published' && !this.canPublish(this.activeVendor())) {
-      this.message.set('Business registration is required before services can be published.');
+      this.message.set(this.publishReadinessMessage());
       return;
     }
     const hadServiceImage = Boolean(this.serviceImageForm.imageDataBase64);
@@ -1098,7 +1181,7 @@ export class VendorDashboardPage implements OnInit {
 
   protected async updateServiceStatus(service: any, status: string): Promise<void> {
     if (status === 'published' && !this.canPublish(this.activeVendor())) {
-      this.message.set('Business registration is required before services can be published.');
+      this.message.set(this.publishReadinessMessage());
       return;
     }
     await this.post(`/api/services/${service.id}`, { status }, `Service marked ${status}.`);
@@ -1187,6 +1270,19 @@ export class VendorDashboardPage implements OnInit {
     this.mediaForm = { mediaType: 'gallery', url: '' };
     this.mediaImageForm = this.emptyImageForm();
     this.resetFileInput('storeMediaImageFile');
+  }
+
+  protected async saveSocialLink(): Promise<void> {
+    const store = this.activeStore();
+    if (!store) return;
+    await this.post(`/api/stores/${store.id}/social-links`, this.socialForm, 'Social account saved.');
+    this.socialForm = { platform: this.socialForm.platform, label: '', url: '', status: 'active' };
+  }
+
+  protected async removeSocialLink(link: StoreSocialLink): Promise<void> {
+    const store = this.activeStore();
+    if (!store || !link.platform) return;
+    await this.request(`/api/stores/${store.id}/social-links/${encodeURIComponent(link.platform)}`, 'DELETE', null, 'Social account removed.');
   }
 
   protected selectStoreMediaFile(event: Event): void {
@@ -1516,6 +1612,22 @@ export class VendorDashboardPage implements OnInit {
     return `Map point set: ${Number(latitude).toFixed(6)}, ${Number(longitude).toFixed(6)}`;
   }
 
+  protected socialIcon(platform: string): string {
+    return {
+      facebook: 'f',
+      instagram: 'IG',
+      whatsapp: 'WA',
+      tiktok: 'TT',
+      x: 'X',
+      youtube: 'YT',
+      website: 'www'
+    }[platform] || 'link';
+  }
+
+  protected socialName(platform: string): string {
+    return this.socialPlatforms.find((item) => item.value === platform)?.label || platform;
+  }
+
   protected async copyStoreLink(): Promise<void> {
     if (typeof navigator !== 'undefined' && navigator.clipboard) {
       await navigator.clipboard.writeText(this.storeUrl());
@@ -1532,6 +1644,13 @@ export class VendorDashboardPage implements OnInit {
 
   protected compliance(vendor: VendorRecord | null): string {
     if (!vendor) return 'Vendor data is not loaded.';
+    const store = this.activeStore();
+    if (!store) {
+      return 'Create a store profile before products, foods, or services can appear publicly.';
+    }
+    if (store.status !== 'active') {
+      return 'Set the store status to active before products, foods, or services can appear publicly.';
+    }
     if (vendor.subscriptionStatus === 'past_due') {
       return 'Subscription is past due. Product publishing is paused until payment is restored.';
     }
@@ -1552,6 +1671,8 @@ export class VendorDashboardPage implements OnInit {
 
   protected severity(vendor: VendorRecord | null): string {
     if (!vendor) return 'notice';
+    const store = this.activeStore();
+    if (!store || store.status !== 'active') return 'notice';
     if (vendor.subscriptionStatus === 'past_due') return 'critical';
     if (vendor.subscriptionStatus !== 'active' || this.isStarterPlan(vendor)) return 'notice';
     if (vendor.registrationStatus === 'registered') return 'ok';
@@ -1560,10 +1681,26 @@ export class VendorDashboardPage implements OnInit {
   }
 
   protected canPublish(vendor: VendorRecord | null): boolean {
+    const store = this.activeStore();
     return !!vendor
+      && !!store
+      && store.status === 'active'
       && vendor.subscriptionStatus === 'active'
       && vendor.registrationStatus === 'registered'
       && !this.isStarterPlan(vendor);
+  }
+
+  protected publishReadinessMessage(): string {
+    const vendor = this.activeVendor();
+    const store = this.activeStore();
+    if (!vendor) return 'Vendor data is still loading.';
+    if (!store) return 'Create and save a store profile before publishing.';
+    if (store.status !== 'active') return 'Set the store status to active before publishing or showing listings in the marketplace.';
+    if (vendor.subscriptionStatus === 'past_due') return 'Subscription is past due. Restore the subscription before publishing.';
+    if (vendor.subscriptionStatus !== 'active') return 'Activate a vendor subscription before publishing.';
+    if (this.isStarterPlan(vendor)) return 'Starter plan is private setup only. Choose Growth or Pro before publishing.';
+    if (vendor.registrationStatus !== 'registered') return 'Complete business registration before publishing.';
+    return 'Publishing is enabled for this store.';
   }
 
   private isStarterPlan(vendor: VendorRecord | null): boolean {
@@ -1677,12 +1814,12 @@ export class VendorDashboardPage implements OnInit {
     }[extension || ''] || 'application/octet-stream';
   }
 
-  private async post(path: string, body: unknown, successMessage: string, reload = true): Promise<any | null> {
+  private async request(path: string, method: string, body: unknown, successMessage: string, reload = true): Promise<any | null> {
     try {
       const response = await fetch(apiUrl(path), {
-        method: 'POST',
+        method,
         headers: this.auth.authHeaders(),
-        body: JSON.stringify(body)
+        body: body === null || body === undefined ? undefined : JSON.stringify(body)
       });
       const payload = await response.json().catch(() => ({}));
       if (!response.ok) {
@@ -1697,5 +1834,9 @@ export class VendorDashboardPage implements OnInit {
       this.message.set(error instanceof Error ? error.message : 'Request failed.');
       return null;
     }
+  }
+
+  private async post(path: string, body: unknown, successMessage: string, reload = true): Promise<any | null> {
+    return this.request(path, 'POST', body, successMessage, reload);
   }
 }

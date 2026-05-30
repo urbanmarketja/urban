@@ -33,8 +33,11 @@ interface CustomerAddress {
   template: `
     <main>
       @if (vendor(); as store) {
-        <section class="page-hero store-hero">
+        <section class="page-hero store-hero" [class.has-store-banner]="store.bannerUrl" [style.background-image]="storeHeroBackground(store)">
           <div class="container page-header">
+            @if (store.logoUrl) {
+              <img class="store-logo-avatar" [src]="store.logoUrl" [alt]="store.name + ' logo'">
+            }
             <p class="eyebrow">Vendor store</p>
             <h1>{{ store.name }}</h1>
             <p>{{ store.summary }}</p>
@@ -76,6 +79,20 @@ interface CustomerAddress {
                 <a class="button outline-button" [href]="facebookShare()" target="_blank" rel="noopener">Facebook</a>
               </div>
             </div>
+
+            @if (socialLinks(store).length) {
+              <div class="follow-us-panel">
+                <h3>Follow us</h3>
+                <div class="social-chip-list">
+                  @for (link of socialLinks(store); track link.platform) {
+                    <a class="social-chip" [href]="link.url" target="_blank" rel="noopener">
+                      <span class="social-icon" [attr.data-platform]="link.platform">{{ socialIcon(link.platform) }}</span>
+                      <span>{{ link.label || socialName(link.platform) }}</span>
+                    </a>
+                  }
+                </div>
+              </div>
+            }
           </article>
 
           <article class="dashboard-card store-map-card">
@@ -109,6 +126,22 @@ interface CustomerAddress {
             </div>
           </article>
         </section>
+
+        @if (store.galleryMedia?.length) {
+          <section class="container section store-gallery-section">
+            <div class="section-heading">
+              <h2>Store gallery</h2>
+              <p>Photos shared by {{ store.name }}.</p>
+            </div>
+            <div class="store-gallery-grid">
+              @for (media of store.galleryMedia; track media.id || media.url) {
+                <figure>
+                  <img [src]="media.url" [alt]="media.altText || store.name + ' store photo'" loading="lazy" decoding="async">
+                </figure>
+              }
+            </div>
+          </section>
+        }
 
         <section class="container section">
           <div class="section-heading">
@@ -194,6 +227,11 @@ export class VendorStorePage implements OnInit {
     return `https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${encodeURIComponent(this.storeUrl())}`;
   }
 
+  protected storeHeroBackground(store: Vendor): string | null {
+    if (!store.bannerUrl) return null;
+    return `linear-gradient(90deg, rgba(12, 28, 34, 0.88), rgba(12, 28, 34, 0.58)), url("${store.bannerUrl}")`;
+  }
+
   protected daysLeft(): number {
     const store = this.vendor();
     return store ? this.daysUntilExpiry(store) : 0;
@@ -212,6 +250,34 @@ export class VendorStorePage implements OnInit {
 
   protected facebookShare(): string {
     return `https://www.facebook.com/sharer/sharer.php?u=${encodeURIComponent(this.storeUrl())}`;
+  }
+
+  protected socialLinks(store: Vendor): NonNullable<Vendor['socialLinks']> {
+    return (store.socialLinks || []).filter((link) => link.url && link.status !== 'hidden');
+  }
+
+  protected socialIcon(platform: string): string {
+    return {
+      facebook: 'f',
+      instagram: 'IG',
+      whatsapp: 'WA',
+      tiktok: 'TT',
+      x: 'X',
+      youtube: 'YT',
+      website: 'www'
+    }[platform] || 'link';
+  }
+
+  protected socialName(platform: string): string {
+    return {
+      facebook: 'Facebook',
+      instagram: 'Instagram',
+      whatsapp: 'WhatsApp',
+      tiktok: 'TikTok',
+      x: 'X',
+      youtube: 'YouTube',
+      website: 'Website'
+    }[platform] || platform;
   }
 
   protected customerTrustLabel(store: Vendor): string {

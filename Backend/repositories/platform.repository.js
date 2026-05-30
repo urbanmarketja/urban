@@ -32,6 +32,7 @@ const LISTING_IMAGE_TYPES = new Map([
   ['image/png', ['.png']],
   ['image/webp', ['.webp']]
 ]);
+const STORE_SOCIAL_PLATFORMS = new Set(['facebook', 'instagram', 'whatsapp', 'tiktok', 'x', 'youtube', 'website']);
 
 function latestVendorSubscriptionJoin(alias = 'sub') {
   return `
@@ -83,6 +84,57 @@ function primaryServiceImageJoin(alias = 'service_image') {
       FROM service_images
       GROUP BY service_id
     ) ${alias} ON ${alias}.serviceId = s.id
+  `;
+}
+
+function primaryStoreMediaJoin(alias = 'store_media_primary') {
+  return `
+    LEFT JOIN (
+      SELECT
+        store_id AS storeId,
+        SUBSTRING_INDEX(GROUP_CONCAT(CASE WHEN media_type = 'logo' THEN url END ORDER BY sort_order, created_at SEPARATOR '||'), '||', 1) AS logoUrl,
+        SUBSTRING_INDEX(GROUP_CONCAT(CASE WHEN media_type = 'banner' THEN url END ORDER BY sort_order, created_at SEPARATOR '||'), '||', 1) AS bannerUrl
+      FROM store_media
+      GROUP BY store_id
+    ) ${alias} ON ${alias}.storeId = st.id
+  `;
+}
+
+function activeStoreSocialLinksJoin(alias = 'store_social_active') {
+  return `
+    LEFT JOIN (
+      SELECT
+        store_id AS storeId,
+        JSON_ARRAYAGG(JSON_OBJECT(
+          'id', id,
+          'platform', platform,
+          'label', label,
+          'url', url,
+          'status', status,
+          'sortOrder', sort_order
+        )) AS socialLinks
+      FROM store_social_links
+      WHERE status = 'active'
+      GROUP BY store_id
+    ) ${alias} ON ${alias}.storeId = st.id
+  `;
+}
+
+function storeGalleryMediaJoin(alias = 'store_gallery_media') {
+  return `
+    LEFT JOIN (
+      SELECT
+        store_id AS storeId,
+        JSON_ARRAYAGG(JSON_OBJECT(
+          'id', id,
+          'url', url,
+          'altText', alt_text,
+          'sortOrder', sort_order
+        )) AS galleryMedia
+      FROM store_media
+      WHERE media_type = 'gallery'
+      GROUP BY store_id
+    ) ${alias} ON ${alias}.storeId = st.id
   `;
 }
 
@@ -541,6 +593,7 @@ async function listVendors(activeOnly = true, registeredOnly = false) {
   const where = [
     activeOnly ? "v.status = 'active'" : '',
     registeredOnly ? "v.registration_status = 'registered'" : '',
+    registeredOnly ? "st.status = 'active'" : '',
     registeredOnly ? "sub.status = 'active'" : '',
     registeredOnly ? "COALESCE(plan.code, 'starter') <> 'starter'" : ''
   ].filter(Boolean);
@@ -557,6 +610,10 @@ async function listVendors(activeOnly = true, registeredOnly = false) {
       st.longitude,
       st.rating,
       st.summary,
+      store_media_primary.logoUrl,
+      store_media_primary.bannerUrl,
+      store_gallery_media.galleryMedia,
+      store_social_active.socialLinks,
       v.store_type AS storeType,
       v.registration_status AS registrationStatus,
       v.status AS status,
@@ -568,6 +625,9 @@ async function listVendors(activeOnly = true, registeredOnly = false) {
       sub.current_period_end AS nextBillingAt
     FROM vendors v
     LEFT JOIN stores st ON st.vendor_id = v.id
+    ${primaryStoreMediaJoin()}
+    ${storeGalleryMediaJoin()}
+    ${activeStoreSocialLinksJoin()}
     ${latestVendorSubscriptionJoin('sub')}
     LEFT JOIN subscription_plans plan ON plan.id = sub.plan_id
     ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
@@ -585,6 +645,10 @@ async function listVendors(activeOnly = true, registeredOnly = false) {
     onboardedAt: dateOnly(row.onboardedAt),
     lastPaymentAt: row.lastPaymentAt ? dateOnly(row.lastPaymentAt) : null,
     nextBillingAt: row.nextBillingAt ? dateOnly(row.nextBillingAt) : null,
+    logoUrl: row.logoUrl || null,
+    bannerUrl: row.bannerUrl || null,
+    galleryMedia: asJsonArray(row.galleryMedia).sort((a, b) => Number(a.sortOrder || 0) - Number(b.sortOrder || 0)),
+    socialLinks: asJsonArray(row.socialLinks).sort((a, b) => Number(a.sortOrder || 0) - Number(b.sortOrder || 0)),
     subscriptionStatus: row.subscriptionStatus || 'trial',
     subscriptionPlanCode: row.subscriptionPlanCode || 'starter',
     subscriptionPlan: row.subscriptionPlan || 'Starter vendor'
@@ -623,7 +687,7 @@ async function listProducts() {
     FROM products p
     JOIN vendors v ON v.id = p.vendor_id
     ${publicVendorSubscriptionJoin()}
-    LEFT JOIN stores st ON st.id = p.store_id
+    JOIN stores st ON st.id = p.store_id AND st.status = 'active'
     ${primaryProductImageJoin()}
     LEFT JOIN (
       SELECT product_id AS productId, MAX(ends_at) AS featuredUntil
@@ -634,7 +698,6 @@ async function listProducts() {
     WHERE p.status = 'published'
       AND v.status = 'active'
       AND v.registration_status = 'registered'
-      AND (st.id IS NULL OR st.status = 'active')
     ORDER BY feature.featuredUntil IS NULL, p.created_at DESC
   `);
 
@@ -691,12 +754,11 @@ async function listServices() {
     FROM services s
     JOIN vendors v ON v.id = s.vendor_id
     ${publicVendorSubscriptionJoin()}
-    LEFT JOIN stores st ON st.id = s.store_id
+    JOIN stores st ON st.id = s.store_id AND st.status = 'active'
     ${primaryServiceImageJoin()}
     WHERE s.status = 'published'
       AND v.status = 'active'
       AND v.registration_status = 'registered'
-      AND (st.id IS NULL OR st.status = 'active')
     ORDER BY s.name
   `);
 
@@ -720,13 +782,12 @@ async function listFoods() {
     FROM products p
     JOIN vendors v ON v.id = p.vendor_id
     ${publicVendorSubscriptionJoin()}
-    LEFT JOIN stores st ON st.id = p.store_id
+    JOIN stores st ON st.id = p.store_id AND st.status = 'active'
     ${primaryProductImageJoin()}
     WHERE p.type = 'food'
       AND p.status = 'published'
       AND v.status = 'active'
       AND v.registration_status = 'registered'
-      AND (st.id IS NULL OR st.status = 'active')
     ORDER BY p.name
   `);
 
@@ -1109,12 +1170,11 @@ async function cartItemsForCart(cartId) {
     JOIN products p ON p.id = ci.product_id
     JOIN vendors v ON v.id = ci.vendor_id
     ${publicVendorSubscriptionJoin()}
-    LEFT JOIN stores st ON st.id = ci.store_id
+    JOIN stores st ON st.id = ci.store_id AND st.status = 'active'
     WHERE ci.cart_id = :cartId
       AND p.status = 'published'
       AND v.status = 'active'
       AND v.registration_status = 'registered'
-      AND (st.id IS NULL OR st.status = 'active')
     ORDER BY ci.created_at
   `, { cartId });
 
@@ -1154,12 +1214,11 @@ async function addCartItem(customerUserId, { productId, qty = 1 }) {
     FROM products p
     JOIN vendors v ON v.id = p.vendor_id
     ${publicVendorSubscriptionJoin()}
-    LEFT JOIN stores st ON st.id = p.store_id
+    JOIN stores st ON st.id = p.store_id AND st.status = 'active'
     WHERE p.id = :productId
       AND p.status = 'published'
       AND v.status = 'active'
       AND v.registration_status = 'registered'
-      AND (st.id IS NULL OR st.status = 'active')
     LIMIT 1
   `, { productId });
   const product = rows[0];
@@ -1204,12 +1263,11 @@ async function updateCartItem(customerUserId, productId, qty) {
     FROM products p
     JOIN vendors v ON v.id = p.vendor_id
     ${publicVendorSubscriptionJoin()}
-    LEFT JOIN stores st ON st.id = p.store_id
+    JOIN stores st ON st.id = p.store_id AND st.status = 'active'
     WHERE p.id = :productId
       AND p.status = 'published'
       AND v.status = 'active'
       AND v.registration_status = 'registered'
-      AND (st.id IS NULL OR st.status = 'active')
     LIMIT 1
   `, { productId });
   if (!rows[0]) {
@@ -1655,12 +1713,11 @@ async function createOrder({ customer = {}, paymentMethod = 'Dime', items = [] }
           FROM products p
           JOIN vendors v ON v.id = p.vendor_id
           ${publicVendorSubscriptionJoin()}
-          LEFT JOIN stores st ON st.id = p.store_id
+          JOIN stores st ON st.id = p.store_id AND st.status = 'active'
           WHERE p.id = :id
             AND p.status = 'published'
             AND v.status = 'active'
             AND v.registration_status = 'registered'
-            AND (st.id IS NULL OR st.status = 'active')
           LIMIT 1
           FOR UPDATE
         `, { id: item.productId })
@@ -2360,6 +2417,47 @@ async function createOrderDispute(orderId, body = {}, createdByUserId, role = 'c
 async function defaultStoreIdForVendor(vendorId) {
   const rows = await query('SELECT id FROM stores WHERE vendor_id = :vendorId ORDER BY created_at LIMIT 1', { vendorId });
   return rows[0]?.id || null;
+}
+
+async function storeById(storeId) {
+  if (!storeId) return null;
+  const rows = await query(`
+    SELECT
+      id,
+      vendor_id AS vendorId,
+      name,
+      slug,
+      status
+    FROM stores
+    WHERE id = :storeId
+    LIMIT 1
+  `, { storeId });
+  return rows[0] || null;
+}
+
+async function assertStorePublishAllowed(storeId, vendorId, action = 'publish') {
+  const store = await storeById(storeId);
+  if (!store || store.vendorId !== vendorId) {
+    const error = new Error(`Vendor cannot ${action} because the listing is not connected to this store`);
+    error.statusCode = 403;
+    error.compliance = {
+      severity: 'notice',
+      message: 'Listings must belong to the selected vendor store before they can appear publicly.',
+      eligibility: { canSell: false, reason: 'store_required_for_public_listing' }
+    };
+    throw error;
+  }
+  if (store.status !== 'active') {
+    const error = new Error(`Vendor cannot ${action} until the store status is active`);
+    error.statusCode = 403;
+    error.compliance = {
+      severity: 'notice',
+      message: 'Set the store status to active before products, foods, or services can appear publicly.',
+      eligibility: { canSell: false, reason: 'active_store_required_for_public_listing' }
+    };
+    throw error;
+  }
+  return store;
 }
 
 async function vendorIdForStore(storeId) {
@@ -3145,7 +3243,7 @@ async function paySubscriptionWithWallet(body) {
 
 async function featureProductWithWallet(productId, body) {
   const productRows = await query(`
-    SELECT id, vendor_id AS vendorId, name
+    SELECT id, vendor_id AS vendorId, store_id AS storeId, name, status
     FROM products
     WHERE id = :productId
     LIMIT 1
@@ -3158,6 +3256,12 @@ async function featureProductWithWallet(productId, body) {
   }
   const vendor = await findVendorById(product.vendorId);
   assertPublishAllowed(vendor, 'feature products');
+  await assertStorePublishAllowed(product.storeId, product.vendorId, 'feature products');
+  if (product.status !== 'published') {
+    const error = new Error('Only published products can be featured');
+    error.statusCode = 403;
+    throw error;
+  }
   const days = Math.max(1, Math.min(30, Math.floor(Number(body.days) || FEATURE_PRODUCT_DAYS)));
   const amount = Math.max(FEATURE_PRODUCT_COST_COINS, Math.floor(Number(body.costCoins) || FEATURE_PRODUCT_COST_COINS));
 
@@ -3464,17 +3568,34 @@ async function listStoreMedia(storeIds) {
   `, { storeIds: storeIds.join(',') });
 }
 
+async function listStoreSocialLinks(storeIds, activeOnly = false) {
+  if (!storeIds.length) return [];
+  const rows = await query(`
+    SELECT id, store_id AS storeId, platform, label, url, status, sort_order AS sortOrder, created_at AS createdAt, updated_at AS updatedAt
+    FROM store_social_links
+    WHERE FIND_IN_SET(store_id, :storeIds)
+      ${activeOnly ? "AND status = 'active'" : ''}
+    ORDER BY sort_order, platform
+  `, { storeIds: storeIds.join(',') });
+
+  return rows.map((row) => ({
+    ...row,
+    sortOrder: Number(row.sortOrder || 0)
+  }));
+}
+
 async function vendorOperationsForUser(userId, includeAll = false) {
   const vendorIds = includeAll ? (await listVendors()).map((vendor) => vendor.id) : await vendorIdsForUser(userId);
   const vendors = (await listVendors()).filter((vendor) => vendorIds.includes(vendor.id));
   const stores = (await Promise.all(vendorIds.map(storeByVendorId))).filter(Boolean);
   const storeIds = stores.map((store) => store.id);
-  const [products, services, jobs, documents, media, registrationRequests, notifications, cartCustomers, discounts, orders, bookings, wallets, walletLedger, checkoutRequests, payoutProfiles, walletAudit] = await Promise.all([
+  const [products, services, jobs, documents, media, socialLinks, registrationRequests, notifications, cartCustomers, discounts, orders, bookings, wallets, walletLedger, checkoutRequests, payoutProfiles, walletAudit] = await Promise.all([
     listVendorProducts(vendorIds),
     listVendorServices(vendorIds),
     listVendorJobs(vendorIds),
     listVendorDocuments(vendorIds),
     listStoreMedia(storeIds),
+    listStoreSocialLinks(storeIds),
     includeAll ? listRegistrationRequests() : query(`
       SELECT r.id, r.vendor_id AS vendorId, v.business_name AS vendor, r.status, r.notes AS nextStep, r.created_at AS requestedAt
       FROM registration_assistance_requests r
@@ -3495,7 +3616,7 @@ async function vendorOperationsForUser(userId, includeAll = false) {
     includeAll ? listWalletAuditReport(vendorIds) : []
   ]);
 
-  return { vendors, stores, products, services, jobs, documents, media, registrationRequests, notifications, cartCustomers, discounts, orders, bookings, wallets, walletLedger, checkoutRequests, payoutProfiles, walletAudit };
+  return { vendors, stores, products, services, jobs, documents, media, socialLinks, registrationRequests, notifications, cartCustomers, discounts, orders, bookings, wallets, walletLedger, checkoutRequests, payoutProfiles, walletAudit };
 }
 
 async function updateStore(vendorId, body) {
@@ -3547,10 +3668,12 @@ async function createProduct(body) {
   }
 
   const status = body.status === 'draft' || body.status === 'Draft' ? 'draft' : 'published';
-  if (status === 'published') assertPublishAllowed(vendor, 'publish products');
-
   const id = `p${Date.now()}`;
   const storeId = body.storeId || await defaultStoreIdForVendor(vendor.id);
+  if (status === 'published') {
+    assertPublishAllowed(vendor, 'publish products');
+    await assertStorePublishAllowed(storeId, vendor.id, 'publish products');
+  }
   await query(`
     INSERT INTO products (id, store_id, vendor_id, type, name, description, price_jmd, stock_quantity, delivery_day, status)
     VALUES (:id, :storeId, :vendorId, :type, :name, :description, :price, :stockQuantity, :deliveryDay, :status)
@@ -3580,7 +3703,10 @@ async function updateProduct(productId, body) {
   }
   const vendor = await findVendorById(product.vendor_id);
   const status = ['draft', 'published', 'paused', 'rejected'].includes(body.status) ? body.status : product.status;
-  if (status === 'published') assertPublishAllowed(vendor, 'publish products');
+  if (status === 'published') {
+    assertPublishAllowed(vendor, 'publish products');
+    await assertStorePublishAllowed(product.store_id, product.vendor_id, 'publish products');
+  }
   await query(`
     UPDATE products
     SET name = :name, description = :description, price_jmd = :price, stock_quantity = :stockQuantity, delivery_day = :deliveryDay, type = :type, status = :status
@@ -3800,6 +3926,7 @@ async function createProductImage(productId, body) {
 
 async function createStoreMedia(storeId, body) {
   const id = randomUUID();
+  const mediaType = ['logo', 'banner', 'gallery'].includes(body.mediaType) ? body.mediaType : 'gallery';
   const url = await saveListingImageUpload(id, body);
   if (!url) {
     const error = new Error('Choose a store media image or provide a media URL');
@@ -3812,12 +3939,106 @@ async function createStoreMedia(storeId, body) {
   `, {
     id,
     storeId,
-    mediaType: ['logo', 'banner', 'gallery'].includes(body.mediaType) ? body.mediaType : 'gallery',
+    mediaType,
     url,
     altText: body.altText || null,
     sortOrder: Number(body.sortOrder) || 0
   });
-  return { id, storeId, mediaType: body.mediaType || 'gallery', url, altText: body.altText || '', sortOrder: Number(body.sortOrder) || 0 };
+  return { id, storeId, mediaType, url, altText: body.altText || '', sortOrder: Number(body.sortOrder) || 0 };
+}
+
+function normalizeSocialPlatform(value) {
+  const platform = String(value || '').toLowerCase().trim();
+  if (!STORE_SOCIAL_PLATFORMS.has(platform)) {
+    const error = new Error('Choose a supported social platform');
+    error.statusCode = 400;
+    throw error;
+  }
+  return platform;
+}
+
+function ensureHttps(value) {
+  const text = String(value || '').trim();
+  if (/^https?:\/\//i.test(text)) return text;
+  return `https://${text.replace(/^\/+/, '')}`;
+}
+
+function socialHandle(value) {
+  return String(value || '').trim().replace(/^@+/, '').replace(/^\/+/, '');
+}
+
+function normalizeSocialUrl(platform, value) {
+  const raw = String(value || '').trim();
+  if (!raw) {
+    const error = new Error('Social account requires a URL, handle, or phone number');
+    error.statusCode = 400;
+    throw error;
+  }
+  if (/^https?:\/\//i.test(raw)) return raw;
+  if (platform === 'whatsapp') {
+    const phone = raw.replace(/[^\d]/g, '');
+    if (!phone) {
+      const error = new Error('WhatsApp link requires a phone number or wa.me URL');
+      error.statusCode = 400;
+      throw error;
+    }
+    return `https://wa.me/${phone}`;
+  }
+  if (platform === 'website' || raw.includes('.') || raw.includes('/')) {
+    return ensureHttps(raw);
+  }
+  const handle = encodeURIComponent(socialHandle(raw));
+  return {
+    facebook: `https://www.facebook.com/${handle}`,
+    instagram: `https://www.instagram.com/${handle}`,
+    tiktok: `https://www.tiktok.com/@${handle}`,
+    x: `https://x.com/${handle}`,
+    youtube: `https://www.youtube.com/@${handle}`
+  }[platform] || ensureHttps(raw);
+}
+
+function defaultSocialLabel(platform, value) {
+  const labels = {
+    facebook: 'Facebook',
+    instagram: 'Instagram',
+    whatsapp: 'WhatsApp',
+    tiktok: 'TikTok',
+    x: 'X',
+    youtube: 'YouTube',
+    website: 'Website'
+  };
+  return String(value || '').trim() || labels[platform] || 'Social link';
+}
+
+async function upsertStoreSocialLink(storeId, body) {
+  const platform = normalizeSocialPlatform(body.platform);
+  const url = normalizeSocialUrl(platform, body.url || body.handle || body.value);
+  const status = body.status === 'hidden' ? 'hidden' : 'active';
+  const id = randomUUID();
+  await query(`
+    INSERT INTO store_social_links (id, store_id, platform, label, url, status, sort_order)
+    VALUES (:id, :storeId, :platform, :label, :url, :status, :sortOrder)
+    ON DUPLICATE KEY UPDATE
+      label = VALUES(label),
+      url = VALUES(url),
+      status = VALUES(status),
+      sort_order = VALUES(sort_order)
+  `, {
+    id,
+    storeId,
+    platform,
+    label: defaultSocialLabel(platform, body.label),
+    url,
+    status,
+    sortOrder: Number(body.sortOrder) || 0
+  });
+  return (await listStoreSocialLinks([storeId])).find((link) => link.platform === platform);
+}
+
+async function deleteStoreSocialLink(storeId, platformValue) {
+  const platform = normalizeSocialPlatform(platformValue);
+  await query('DELETE FROM store_social_links WHERE store_id = :storeId AND platform = :platform', { storeId, platform });
+  return { storeId, platform, deleted: true };
 }
 
 async function createServiceImage(serviceId, body) {
@@ -3849,9 +4070,12 @@ async function createService(body) {
     throw error;
   }
   const status = body.status === 'draft' || body.status === 'Draft' ? 'draft' : 'published';
-  if (status === 'published') assertPublishAllowed(vendor, 'publish services');
   const id = `svc-${Date.now()}`;
   const storeId = body.storeId || await defaultStoreIdForVendor(vendor.id);
+  if (status === 'published') {
+    assertPublishAllowed(vendor, 'publish services');
+    await assertStorePublishAllowed(storeId, vendor.id, 'publish services');
+  }
   await query(`
     INSERT INTO services (id, vendor_id, store_id, name, category, description, details, price_jmd, pricing_type, status)
     VALUES (:id, :vendorId, :storeId, :name, :category, :description, :details, :price, :pricingType, :status)
@@ -3880,7 +4104,10 @@ async function updateService(serviceId, body) {
   }
   const vendor = await findVendorById(service.vendor_id);
   const status = ['draft', 'published', 'paused', 'rejected'].includes(body.status) ? body.status : service.status;
-  if (status === 'published') assertPublishAllowed(vendor, 'publish services');
+  if (status === 'published') {
+    assertPublishAllowed(vendor, 'publish services');
+    await assertStorePublishAllowed(service.store_id, service.vendor_id, 'publish services');
+  }
   await query(`
     UPDATE services
     SET name = :name, category = :category, description = :description, details = :details, price_jmd = :price, pricing_type = :pricingType, status = :status
@@ -5877,6 +6104,7 @@ module.exports = {
   createServiceImage,
   createServiceBookingDispute,
   createStoreMedia,
+  upsertStoreSocialLink,
   createUser,
   createVendorDocument,
   createVendorCheckoutRequest,
@@ -5884,6 +6112,7 @@ module.exports = {
   customerDashboard,
   defaultVendorIdForUser,
   deleteDiscount,
+  deleteStoreSocialLink,
   findJobById,
   findOrderById,
   findBookingById,

@@ -1728,6 +1728,45 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  const storeSocialMatch = url.pathname.match(/^\/api\/stores\/([^/]+)\/social-links$/);
+  if (req.method === 'POST' && storeSocialMatch) {
+    const authUser = requireRouteRoles(req, res, ['vendor', 'admin']);
+    if (!authUser) return;
+    if (repository.isDatabaseEnabled()) {
+      const vendorId = await repository.vendorIdForStore(storeSocialMatch[1]);
+      if (!await authorizeVendorTarget(authUser, vendorId)) {
+        sendJson(res, 403, { error: 'Vendor account cannot manage this store' });
+        return;
+      }
+      readJsonBody(req)
+        .then((body) => repository.upsertStoreSocialLink(storeSocialMatch[1], body))
+        .then((link) => sendJson(res, 200, link))
+        .catch((error) => sendJson(res, error.statusCode || 400, { error: error.message || 'Invalid JSON body' }));
+      return;
+    }
+    sendJson(res, 200, { ok: true });
+    return;
+  }
+
+  const storeSocialDeleteMatch = url.pathname.match(/^\/api\/stores\/([^/]+)\/social-links\/([^/]+)$/);
+  if (req.method === 'DELETE' && storeSocialDeleteMatch) {
+    const authUser = requireRouteRoles(req, res, ['vendor', 'admin']);
+    if (!authUser) return;
+    if (repository.isDatabaseEnabled()) {
+      const vendorId = await repository.vendorIdForStore(storeSocialDeleteMatch[1]);
+      if (!await authorizeVendorTarget(authUser, vendorId)) {
+        sendJson(res, 403, { error: 'Vendor account cannot manage this store' });
+        return;
+      }
+      repository.deleteStoreSocialLink(storeSocialDeleteMatch[1], decodeURIComponent(storeSocialDeleteMatch[2]))
+        .then((result) => sendJson(res, 200, result))
+        .catch((error) => sendJson(res, error.statusCode || 400, { error: error.message || 'Social account could not be removed' }));
+      return;
+    }
+    sendJson(res, 200, { ok: true });
+    return;
+  }
+
   const serviceImageMatch = url.pathname.match(/^\/api\/services\/([^/]+)\/images$/);
   if (req.method === 'POST' && serviceImageMatch) {
     const authUser = requireRouteRoles(req, res, ['vendor', 'admin']);

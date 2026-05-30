@@ -10,6 +10,23 @@ export interface SubscriptionPlan {
   features: string[];
 }
 
+export interface StoreSocialLink {
+  id?: string;
+  storeId?: string;
+  platform: string;
+  label?: string;
+  url: string;
+  status?: string;
+  sortOrder?: number;
+}
+
+export interface StoreGalleryMedia {
+  id?: string;
+  url: string;
+  altText?: string;
+  sortOrder?: number;
+}
+
 export interface Vendor {
   id: string;
   name: string;
@@ -29,6 +46,10 @@ export interface Vendor {
   subscriptionPlan: string;
   lastPaymentAt?: string;
   nextBillingAt?: string;
+  logoUrl?: string | null;
+  bannerUrl?: string | null;
+  galleryMedia?: StoreGalleryMedia[];
+  socialLinks?: StoreSocialLink[];
   categories: string[];
   storeType?: 'products' | 'services' | 'foods' | 'mixed' | string;
   status?: 'active' | 'disabled' | 'pending';

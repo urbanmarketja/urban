@@ -107,6 +107,20 @@ CREATE TABLE IF NOT EXISTS store_media (
   CONSTRAINT fk_store_media_store FOREIGN KEY (store_id) REFERENCES stores(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+CREATE TABLE IF NOT EXISTS store_social_links (
+  id CHAR(36) PRIMARY KEY DEFAULT (UUID()),
+  store_id CHAR(36) NOT NULL,
+  platform ENUM('facebook', 'instagram', 'whatsapp', 'tiktok', 'x', 'youtube', 'website') NOT NULL,
+  label VARCHAR(120),
+  url VARCHAR(500) NOT NULL,
+  status ENUM('active', 'hidden') NOT NULL DEFAULT 'active',
+  sort_order INT NOT NULL DEFAULT 0,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  UNIQUE KEY uniq_store_social_links_store_platform (store_id, platform),
+  CONSTRAINT fk_store_social_links_store FOREIGN KEY (store_id) REFERENCES stores(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 CREATE TABLE IF NOT EXISTS subscription_plans (
   id CHAR(36) PRIMARY KEY DEFAULT (UUID()),
   code VARCHAR(80) NOT NULL UNIQUE,
@@ -572,6 +586,7 @@ CREATE INDEX idx_users_role ON users(role);
 CREATE INDEX idx_vendor_users_user_id ON vendor_users(user_id);
 CREATE INDEX idx_stores_vendor_id ON stores(vendor_id);
 CREATE INDEX idx_store_media_store_id ON store_media(store_id);
+CREATE INDEX idx_store_social_links_store_id ON store_social_links(store_id);
 CREATE INDEX idx_products_store_id ON products(store_id);
 CREATE INDEX idx_products_vendor_id ON products(vendor_id);
 CREATE INDEX idx_products_stock_quantity ON products(stock_quantity);
@@ -604,4 +619,3 @@ CREATE INDEX idx_job_applications_applicant_user_id ON job_applications(applican
 CREATE INDEX idx_compliance_alerts_vendor_id ON compliance_alerts(vendor_id);
 CREATE INDEX idx_notifications_user_id ON notifications(user_id);
 CREATE INDEX idx_admin_audit_logs_admin_user_id ON admin_audit_logs(admin_user_id);
-

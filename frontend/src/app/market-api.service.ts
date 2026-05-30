@@ -116,6 +116,16 @@ export class MarketApiService {
       registrationStatus: vendor.registrationStatus || 'unregistered',
       subscriptionStatus: vendor.subscriptionStatus || 'trial',
       subscriptionPlan: vendor.subscriptionPlan || 'Starter vendor',
+      logoUrl: this.mediaUrl(vendor.logoUrl || ''),
+      bannerUrl: this.mediaUrl(vendor.bannerUrl || ''),
+      galleryMedia: (vendor.galleryMedia || [])
+        .filter((media) => media?.url)
+        .map((media) => ({ ...media, url: this.mediaUrl(media.url), sortOrder: Number(media.sortOrder || 0) }))
+        .sort((a, b) => Number(a.sortOrder || 0) - Number(b.sortOrder || 0)),
+      socialLinks: (vendor.socialLinks || [])
+        .filter((link) => link?.url && link.status !== 'hidden')
+        .map((link) => ({ ...link, sortOrder: Number(link.sortOrder || 0) }))
+        .sort((a, b) => Number(a.sortOrder || 0) - Number(b.sortOrder || 0)),
       storeType: vendor.storeType || 'products',
       categories: vendor.categories?.length ? vendor.categories : ['Marketplace']
     };

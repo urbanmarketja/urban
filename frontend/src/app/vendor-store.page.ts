@@ -58,8 +58,8 @@ interface CustomerAddress {
             <div class="store-highlight-grid">
               <div><strong>{{ store.rating }} star</strong><span>Customer rating</span></div>
               <div><strong>{{ store.deliveryDays.join(' / ') }}</strong><span>Delivery days</span></div>
-              <div><strong>{{ store.location }}</strong><span>Pickup / delivery area</span></div>
               <div><strong>{{ storeProducts().length }}</strong><span>Items available</span></div>
+              <div><strong>{{ store.categories.join(' + ') }}</strong><span>Store type</span></div>
             </div>
             @if (store.registrationStatus === 'unregistered') {
               <div class="notice store-customer-note">
@@ -68,62 +68,88 @@ interface CustomerAddress {
               </div>
             }
 
-            <div class="store-share-inline">
-              <div>
-                <h3>Share this store</h3>
-                <p>Send this storefront to someone or save it for later.</p>
+            <div class="store-action-panel store-share-inline">
+              <div class="store-action-summary">
+                <div>
+                  <h3>Share and follow</h3>
+                  <p>Send this storefront, save it for later, or follow the store online.</p>
+                </div>
+                <button
+                  class="button secondary-button"
+                  type="button"
+                  [attr.aria-expanded]="shareDetailsOpen()"
+                  (click)="toggleShareDetails()"
+                >
+                  {{ shareDetailsOpen() ? 'Hide share options' : 'Share store' }}
+                </button>
               </div>
-              <div class="share-actions">
-                <button class="button secondary-button" type="button" (click)="copyStoreLink()">{{ copyLabel() }}</button>
-                <a class="button outline-button" [href]="whatsappShare()" target="_blank" rel="noopener">WhatsApp</a>
-                <a class="button outline-button" [href]="facebookShare()" target="_blank" rel="noopener">Facebook</a>
-              </div>
-            </div>
-
-            @if (socialLinks(store).length) {
-              <div class="follow-us-panel">
-                <h3>Follow us</h3>
-                <div class="social-chip-list">
-                  @for (link of socialLinks(store); track link.platform) {
-                    <a class="social-chip" [href]="link.url" target="_blank" rel="noopener">
-                      <span class="social-icon" [attr.data-platform]="link.platform">{{ socialIcon(link.platform) }}</span>
-                      <span>{{ link.label || socialName(link.platform) }}</span>
-                    </a>
+              @if (shareDetailsOpen()) {
+                <div class="store-action-details">
+                  <div class="share-actions">
+                    <button class="button secondary-button" type="button" (click)="copyStoreLink()">{{ copyLabel() }}</button>
+                    <a class="button outline-button" [href]="whatsappShare()" target="_blank" rel="noopener">WhatsApp</a>
+                    <a class="button outline-button" [href]="facebookShare()" target="_blank" rel="noopener">Facebook</a>
+                  </div>
+                  <div class="qr-box store-qr-compact">
+                    <img [src]="qrUrl()" alt="QR code for vendor store link">
+                    <span>Scan to reopen this store on another device.</span>
+                  </div>
+                  @if (socialLinks(store).length) {
+                    <div class="follow-us-panel">
+                      <h3>Follow us</h3>
+                      <div class="social-chip-list">
+                        @for (link of socialLinks(store); track link.platform) {
+                          <a class="social-chip" [href]="link.url" target="_blank" rel="noopener">
+                            <span class="social-icon" [attr.data-platform]="link.platform">{{ socialIcon(link.platform) }}</span>
+                            <span>{{ link.label || socialName(link.platform) }}</span>
+                          </a>
+                        }
+                      </div>
+                    </div>
                   }
                 </div>
-              </div>
-            }
+              }
+            </div>
           </article>
 
           <article class="dashboard-card store-map-card">
             <div class="store-card-header">
               <div>
                 <span class="product-tag">Location</span>
-                <h2>Visit or deliver from here</h2>
+                <h2>Pickup, delivery, and directions</h2>
               </div>
+              <button
+                class="button secondary-button"
+                type="button"
+                [attr.aria-expanded]="locationDetailsOpen()"
+                (click)="toggleLocationDetails()"
+              >
+                {{ locationDetailsOpen() ? 'Hide location' : 'Show location' }}
+              </button>
             </div>
-            <p><strong>{{ storeAddressLabel() }}</strong></p>
-            <div class="map-frame">
-              <iframe title="Store map" loading="lazy" referrerpolicy="no-referrer-when-downgrade" [src]="safeMapUrl()"></iframe>
-            </div>
-            <div class="stats-list">
-              <div>
-                <strong>{{ distanceLabel() }}</strong>
-                <span>{{ distanceNote() }}</span>
+            <p class="product-meta">View the store area, estimate distance, or open directions when you need it.</p>
+            @if (locationDetailsOpen()) {
+              <div class="store-action-details">
+                <p><strong>{{ storeAddressLabel() }}</strong></p>
+                <div class="map-frame">
+                  <iframe title="Store map" loading="lazy" referrerpolicy="no-referrer-when-downgrade" [src]="safeMapUrl()"></iframe>
+                </div>
+                <div class="stats-list">
+                  <div>
+                    <strong>{{ distanceLabel() }}</strong>
+                    <span>{{ distanceNote() }}</span>
+                  </div>
+                </div>
+                @if (locationMessage()) {
+                  <div class="notice">{{ locationMessage() }}</div>
+                }
+                <div class="share-actions">
+                  <button class="button secondary-button" type="button" (click)="useCurrentLocation()">Use my location</button>
+                  <a class="button primary-button" [href]="directionsUrl()" target="_blank" rel="noopener">Directions</a>
+                  <a class="button outline-button" [href]="mapSearchUrl()" target="_blank" rel="noopener">Open map</a>
+                </div>
               </div>
-            </div>
-            @if (locationMessage()) {
-              <div class="notice">{{ locationMessage() }}</div>
             }
-            <div class="share-actions">
-              <button class="button secondary-button" type="button" (click)="useCurrentLocation()">Use my location</button>
-              <a class="button primary-button" [href]="directionsUrl()" target="_blank" rel="noopener">Directions</a>
-              <a class="button outline-button" [href]="mapSearchUrl()" target="_blank" rel="noopener">Open map</a>
-            </div>
-            <div class="qr-box store-qr-compact">
-              <img [src]="qrUrl()" alt="QR code for vendor store link">
-              <span>Scan to reopen this store on another device.</span>
-            </div>
           </article>
         </section>
 
@@ -193,6 +219,8 @@ export class VendorStorePage implements OnInit {
   private readonly sanitizer = inject(DomSanitizer);
   protected readonly cart = inject(CartService);
   protected readonly copyLabel = signal('Copy link');
+  protected readonly shareDetailsOpen = signal(false);
+  protected readonly locationDetailsOpen = signal(false);
   protected readonly customerAddresses = signal<CustomerAddress[]>([]);
   protected readonly visitorLocation = signal<Coordinates | null>(null);
   protected readonly locationMessage = signal('');
@@ -345,6 +373,14 @@ export class VendorStorePage implements OnInit {
       this.copyLabel.set('Copied');
       window.setTimeout(() => this.copyLabel.set('Copy link'), 1800);
     }
+  }
+
+  protected toggleShareDetails(): void {
+    this.shareDetailsOpen.update((isOpen) => !isOpen);
+  }
+
+  protected toggleLocationDetails(): void {
+    this.locationDetailsOpen.update((isOpen) => !isOpen);
   }
 
   private async loadCustomerAddresses(): Promise<void> {

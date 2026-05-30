@@ -2192,21 +2192,37 @@ textarea:hover {
   padding: 12px;
 }
 
-.store-share-inline {
-  align-items: center;
+.store-action-panel {
   background: #ffffff;
   border: 1px solid rgba(16, 24, 21, 0.08);
   border-radius: var(--radius);
   display: grid;
   gap: 14px;
-  grid-template-columns: minmax(0, 1fr) auto;
   margin-top: auto;
   padding: 14px;
 }
 
-.store-share-inline h3,
-.store-share-inline p {
+.store-action-summary {
+  align-items: center;
+  display: flex;
+  gap: 14px;
+  justify-content: space-between;
+}
+
+.store-action-summary h3,
+.store-action-summary p {
   margin-bottom: 0;
+}
+
+.store-action-summary .button {
+  flex: 0 0 auto;
+}
+
+.store-action-details {
+  border-top: 1px solid rgba(16, 24, 21, 0.08);
+  display: grid;
+  gap: 14px;
+  padding-top: 14px;
 }
 
 .store-map-card .stats-list {
@@ -2460,9 +2476,9 @@ textarea:hover {
     justify-content: flex-start;
   }
 
-  .store-share-inline {
+  .store-action-summary {
     align-items: stretch;
-    grid-template-columns: 1fr;
+    flex-direction: column;
   }
 }
 

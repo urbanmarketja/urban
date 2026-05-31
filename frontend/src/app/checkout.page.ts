@@ -72,7 +72,11 @@ interface InvoiceItem {
               @for (item of cart.items(); track item.productId) {
                 <li class="cart-item">
                   <div class="cart-item-info">
-                    <strong>{{ item.name }}</strong>
+                    @if (item.vendorSlug) {
+                      <a class="product-name-link" [routerLink]="['/vendor', item.vendorSlug, 'product', item.productId]">{{ item.name }}</a>
+                    } @else {
+                      <strong>{{ item.name }}</strong>
+                    }
                     <span>{{ item.vendorName }} - Qty {{ item.qty }}</span>
                     @if (hasDiscount(item)) {
                       <span class="product-meta">Discount applied: {{ discountLabel(item) }}</span>

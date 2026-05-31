@@ -21,6 +21,7 @@ export const routes: Routes = [
   { path: 'orders/:id', loadComponent: () => import('./order-detail.page').then((m) => m.OrderDetailPage), canActivate: [requireAuth], data: { roles: ['customer', 'admin'] } },
   { path: 'vendor-dashboard', loadComponent: () => import('./vendor-dashboard.page').then((m) => m.VendorDashboardPage), canActivate: [requireAuth], data: { roles: ['vendor', 'admin'] } },
   { path: 'profile', loadComponent: () => import('./profile.page').then((m) => m.ProfilePage), canActivate: [requireAuth] },
+  { path: 'vendor/:slug/product/:id', loadComponent: () => import('./product-detail.page').then((m) => m.ProductDetailPage) },
   { path: 'vendor/:slug', loadComponent: () => import('./vendor-store.page').then((m) => m.VendorStorePage) },
   { path: '**', redirectTo: '' }
 ];

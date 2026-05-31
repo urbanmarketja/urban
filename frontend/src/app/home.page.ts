@@ -70,9 +70,15 @@ import { discountLabelFor, formatCurrency, hasDiscountPrice } from './market-dat
         <div class="product-grid">
           @for (product of featuredProducts(); track product.id) {
             <article class="product-card">
-              <div class="product-image"><span class="visual-icon">{{ iconFor(product.category) }}</span>{{ product.category }}</div>
+              <a class="product-image product-image-link" [class.has-photo]="product.imageUrl" [routerLink]="['/vendor', product.storeSlug || vendorSlug(product.vendorId), 'product', product.id]">
+                @if (product.imageUrl) {
+                  <img [src]="product.imageUrl" [alt]="product.name" loading="lazy" decoding="async">
+                } @else {
+                  <span class="visual-icon">{{ iconFor(product.category) }}</span>{{ product.category }}
+                }
+              </a>
               <p class="product-tag">Delivery: {{ product.deliveryDay }}</p>
-              <h3>{{ product.name }}</h3>
+              <h3><a class="product-name-link" [routerLink]="['/vendor', product.storeSlug || vendorSlug(product.vendorId), 'product', product.id]">{{ product.name }}</a></h3>
               <p>{{ product.description }}</p>
               <p class="product-meta">{{ vendorName(product.vendorId) }} · {{ product.rating }} star</p>
               <div class="product-footer">

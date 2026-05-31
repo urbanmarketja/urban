@@ -15,6 +15,7 @@ interface OrderItem {
   vendorName: string;
   storeId?: string;
   storeName: string;
+  storeSlug?: string;
   fulfillmentStatus?: string;
   vendorCompletedAt?: string | null;
   customerReceivedAt?: string | null;
@@ -136,7 +137,13 @@ interface OrderDetail {
                       <tbody>
                         @for (item of store.items; track item.id || item.name) {
                           <tr>
-                            <td>{{ item.name }}</td>
+                            <td>
+                              @if (item.productId && item.storeSlug) {
+                                <a class="product-name-link" [routerLink]="['/vendor', item.storeSlug, 'product', item.productId]">{{ item.name }}</a>
+                              } @else {
+                                {{ item.name }}
+                              }
+                            </td>
                             <td>{{ item.qty }}</td>
                             <td>{{ money(lineTotal(item)) }}</td>
                             <td><span class="status-pill" [class.warn]="item.fulfillmentStatus !== 'fulfilled'">{{ item.fulfillmentStatus || 'pending' }}</span></td>

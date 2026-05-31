@@ -177,15 +177,15 @@ interface CustomerAddress {
           <div class="product-grid">
             @for (product of storeProducts(); track product.id) {
               <article class="product-card">
-                <div class="product-image" [class.has-photo]="product.imageUrl">
+                <a class="product-image product-image-link" [class.has-photo]="product.imageUrl" [routerLink]="['/vendor', store.slug, 'product', product.id]">
                   @if (product.imageUrl) {
                     <img [src]="product.imageUrl" [alt]="product.name" loading="lazy" decoding="async">
                   } @else {
                     <span class="visual-icon">{{ iconFor(product.category) }}</span>{{ product.category }}
                   }
-                </div>
+                </a>
                 <p class="product-tag">Delivery: {{ product.deliveryDay }}</p>
-                <h3>{{ product.name }}</h3>
+                <h3><a class="product-name-link" [routerLink]="['/vendor', store.slug, 'product', product.id]">{{ product.name }}</a></h3>
                 <p>{{ product.description }}</p>
                 <div class="product-footer">
                   <div class="price-block">

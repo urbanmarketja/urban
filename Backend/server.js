@@ -446,6 +446,31 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  const publicProductMatch = url.pathname.match(/^\/api\/products\/([^/]+)$/);
+  if (req.method === 'GET' && publicProductMatch) {
+    if (repository.isDatabaseEnabled()) {
+      try {
+        const product = await repository.findPublicProductById(publicProductMatch[1]);
+        if (!product) {
+          sendJson(res, 404, { error: 'Product not found' });
+          return;
+        }
+        sendJson(res, 200, product);
+        return;
+      } catch (error) {
+        return sendRouteError(res, error);
+      }
+    }
+    const product = products.find((item) => item.id === publicProductMatch[1]);
+    const vendor = product ? vendors.find((item) => item.id === product.vendorId && isPublicVendor(item)) : null;
+    if (!product || !vendor) {
+      sendJson(res, 404, { error: 'Product not found' });
+      return;
+    }
+    sendJson(res, 200, { ...product, vendorName: vendor.name, vendorSlug: vendor.slug, storeSlug: vendor.slug, images: [] });
+    return;
+  }
+
   if (req.method === 'GET' && url.pathname === '/api/subscriptions/plans') {
     if (repository.isDatabaseEnabled()) {
       try {

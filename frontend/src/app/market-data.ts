@@ -72,12 +72,22 @@ export interface DiscountedPrice {
   discount?: DiscountSummary | null;
 }
 
+export interface ProductImage {
+  id?: string;
+  url: string;
+  altText?: string;
+  sortOrder?: number;
+}
+
 export interface Product {
   id: string;
   name: string;
   vendorId: string;
   vendorName?: string;
   vendorSlug?: string;
+  storeId?: string;
+  storeSlug?: string;
+  storeName?: string;
   category: string;
   price: number;
   originalPrice?: number;
@@ -90,6 +100,7 @@ export interface Product {
   discountIds?: string;
   discountNames?: string;
   imageUrl?: string;
+  images?: ProductImage[];
   isFeatured?: boolean;
   featuredUntil?: string | null;
 }
@@ -141,6 +152,9 @@ export interface FoodOffering {
   vendorId: string;
   vendorName?: string;
   vendorSlug?: string;
+  storeSlug?: string;
+  storeName?: string;
+  deliveryDay?: string;
   price: number;
   originalPrice?: number;
   hasDiscount?: boolean;

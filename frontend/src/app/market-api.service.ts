@@ -66,6 +66,19 @@ export class MarketApiService {
     }
   }
 
+  async loadProduct(id: string): Promise<Product | null> {
+    try {
+      const product = await this.get<Product>(`/api/products/${encodeURIComponent(id)}`);
+      const normalized = this.normalizeProduct(product);
+      this.productsSignal.set(this.upsert(this.products(), normalized));
+      this.errorSignal.set('');
+      return normalized;
+    } catch (error) {
+      this.errorSignal.set(error instanceof Error ? error.message : 'Product could not be loaded.');
+      return null;
+    }
+  }
+
   async loadJob(id: string): Promise<JobListing | null> {
     try {
       const job = await this.get<JobListing>(`/api/jobs/${encodeURIComponent(id)}`);
@@ -85,6 +98,10 @@ export class MarketApiService {
 
   vendorBySlug(slug: string): Vendor | undefined {
     return this.vendors().find((vendor) => vendor.slug === slug);
+  }
+
+  productById(id: string): Product | undefined {
+    return this.products().find((product) => product.id === id);
   }
 
   productsForVendor(vendorId: string): Product[] {
@@ -134,6 +151,10 @@ export class MarketApiService {
   private normalizeProduct(product: Product): Product {
     const price = Number(product.price || 0);
     const originalPrice = Number(product.originalPrice ?? price);
+    const images = (product.images || [])
+      .filter((image) => image?.url)
+      .map((image) => ({ ...image, url: this.mediaUrl(image.url), sortOrder: Number(image.sortOrder || 0) }))
+      .sort((a, b) => Number(a.sortOrder || 0) - Number(b.sortOrder || 0));
     return {
       ...product,
       category: product.category || 'Products',
@@ -147,7 +168,8 @@ export class MarketApiService {
       deliveryDay: product.deliveryDay || 'Available',
       description: product.description || 'Available from a local Urban Market JA vendor.',
       stockQuantity: Number(product.stockQuantity ?? 0),
-      imageUrl: this.mediaUrl(product.imageUrl)
+      imageUrl: this.mediaUrl(product.imageUrl) || images[0]?.url || '',
+      images
     };
   }
 
@@ -180,7 +202,13 @@ export class MarketApiService {
   private enrichProducts(items: Product[], vendorList: Vendor[]): Product[] {
     return items.flatMap((product) => {
       const vendor = vendorList.find((item) => item.id === product.vendorId);
-      return vendor ? [{ ...this.normalizeProduct(product), vendorName: vendor.name, vendorSlug: vendor.slug }] : [];
+      return vendor ? [{
+        ...this.normalizeProduct(product),
+        vendorName: product.vendorName || vendor.name,
+        vendorSlug: product.vendorSlug || product.storeSlug || vendor.slug,
+        storeSlug: product.storeSlug || vendor.slug,
+        storeName: product.storeName || vendor.name
+      }] : [];
     });
   }
 
@@ -199,7 +227,9 @@ export class MarketApiService {
         description: food.description || 'Ready food from an Urban Market JA vendor.',
         imageUrl: this.mediaUrl(food.imageUrl),
         vendorName: vendor.name,
-        vendorSlug: vendor.slug
+        vendorSlug: food.vendorSlug || vendor.slug,
+        storeSlug: food.storeSlug || vendor.slug,
+        storeName: food.storeName || vendor.name
       }];
     });
   }

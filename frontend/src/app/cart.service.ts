@@ -8,6 +8,7 @@ export interface CartItem {
   name: string;
   vendorId: string;
   vendorName: string;
+  vendorSlug?: string;
   price: number;
   originalPrice?: number;
   discount?: DiscountSummary | null;
@@ -48,6 +49,7 @@ export class CartService {
         name: product.name,
         vendorId: product.vendorId,
         vendorName: product.vendorName ?? 'Local vendor',
+        vendorSlug: product.vendorSlug || product.storeSlug,
         price: product.price,
         originalPrice: product.originalPrice ?? product.price,
         discount: product.discount ?? null,

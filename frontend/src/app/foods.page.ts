@@ -28,7 +28,7 @@ import { discountLabelFor, formatCurrency, hasDiscountPrice } from './market-dat
           @for (food of foods(); track food.id) {
             <article class="product-card">
               <div class="product-image"><span class="visual-icon">🍽️</span>Food</div>
-              <h3>{{ food.name }}</h3>
+              <h3><a class="product-name-link" [routerLink]="['/vendor', food.storeSlug || vendorSlug(food.vendorId), 'product', food.id]">{{ food.name }}</a></h3>
               <p>{{ food.description }}</p>
               <p class="product-meta">{{ vendorName(food.vendorId) }}</p>
               <div class="product-footer">

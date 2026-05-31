@@ -567,6 +567,28 @@ interface ListingImageUpload {
                     <input id="listingImageFile" class="visually-hidden-file" name="listingImageFile" type="file" accept="image/*,.heic,.heif,image/heic,image/heif" (change)="selectListingImageFile($event)">
                   </div>
                   <p class="product-meta">{{ imageFileLabel(listingImageForm, 'Optional JPG, PNG, WEBP, HEIC, or HEIF image up to 8 MB.') }}</p>
+                  <div class="listing-preview-panel">
+                    <div class="section-heading compact-heading">
+                      <h3>Customer preview</h3>
+                      <p>This is how the listing card will read before the customer opens the full product page.</p>
+                    </div>
+                    <article class="product-card listing-preview-card">
+                      <div class="product-image" [class.has-photo]="listingPreviewImage()">
+                        @if (listingPreviewImage()) {
+                          <img [src]="listingPreviewImage()" [alt]="listingPreviewName()" loading="lazy" decoding="async">
+                        } @else {
+                          <span class="visual-icon">{{ listingPreviewCategory() }}</span>{{ listingPreviewCategory() }}
+                        }
+                      </div>
+                      <p class="product-tag">Delivery: {{ listingForm.deliveryDay || 'Available' }}</p>
+                      <h3>{{ listingPreviewName() }}</h3>
+                      <p>{{ listingForm.description || 'Add a short description so customers know what they are buying.' }}</p>
+                      <div class="product-footer">
+                        <strong>{{ money(listingPreviewPrice()) }}</strong>
+                        <span class="button-sm light">Store page</span>
+                      </div>
+                    </article>
+                  </div>
                   <button class="button primary-button" type="submit">Create listing</button>
                 </form>
 
@@ -1353,6 +1375,24 @@ export class VendorDashboardPage implements OnInit {
     const kb = image.imageSizeBytes / 1024;
     const size = kb >= 1024 ? `${(kb / 1024).toFixed(1)} MB` : `${Math.round(kb)} KB`;
     return `${image.imageName} selected (${size})`;
+  }
+
+  protected listingPreviewCategory(): string {
+    return this.listingForm.type === 'food' ? 'Food' : 'Products';
+  }
+
+  protected listingPreviewName(): string {
+    return this.listingForm.name || 'Listing name';
+  }
+
+  protected listingPreviewPrice(): number {
+    return Number(this.listingForm.price || 0);
+  }
+
+  protected listingPreviewImage(): string {
+    if (!this.listingImageForm.imageDataBase64) return '';
+    const mime = this.listingImageForm.imageMimeType || 'image/jpeg';
+    return `data:${mime};base64,${this.listingImageForm.imageDataBase64}`;
   }
 
   protected mediaUrl(value?: string): string {

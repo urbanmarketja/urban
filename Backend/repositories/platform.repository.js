@@ -75,6 +75,23 @@ function primaryProductImageJoin(alias = 'product_image') {
   `;
 }
 
+function productImageGalleryJoin(alias = 'product_gallery') {
+  return `
+    LEFT JOIN (
+      SELECT
+        product_id AS productId,
+        JSON_ARRAYAGG(JSON_OBJECT(
+          'id', id,
+          'url', url,
+          'altText', alt_text,
+          'sortOrder', sort_order
+        )) AS images
+      FROM product_images
+      GROUP BY product_id
+    ) ${alias} ON ${alias}.productId = p.id
+  `;
+}
+
 function primaryServiceImageJoin(alias = 'service_image') {
   return `
     LEFT JOIN (
@@ -677,6 +694,9 @@ async function listProducts() {
       p.name,
       p.vendor_id AS vendorId,
       p.store_id AS storeId,
+      v.business_name AS vendorName,
+      st.slug AS storeSlug,
+      st.name AS storeName,
       p.type AS category,
       p.price_jmd AS price,
       p.stock_quantity AS stockQuantity,
@@ -718,6 +738,66 @@ async function listProducts() {
       rating: 4.8
     };
   }));
+}
+
+async function findPublicProductById(productId) {
+  const rows = await query(`
+    SELECT
+      p.id,
+      p.name,
+      p.vendor_id AS vendorId,
+      p.store_id AS storeId,
+      v.business_name AS vendorName,
+      st.slug AS storeSlug,
+      st.name AS storeName,
+      p.type AS category,
+      p.price_jmd AS price,
+      p.stock_quantity AS stockQuantity,
+      p.delivery_day AS deliveryDay,
+      p.description,
+      product_image.imageUrl,
+      product_gallery.images,
+      feature.featuredUntil
+    FROM products p
+    JOIN vendors v ON v.id = p.vendor_id
+    ${publicVendorSubscriptionJoin()}
+    JOIN stores st ON st.id = p.store_id AND st.status NOT IN ('paused', 'suspended')
+    ${primaryProductImageJoin()}
+    ${productImageGalleryJoin()}
+    LEFT JOIN (
+      SELECT product_id AS productId, MAX(ends_at) AS featuredUntil
+      FROM product_features
+      WHERE status = 'active' AND ends_at > NOW()
+      GROUP BY product_id
+    ) feature ON feature.productId = p.id
+    WHERE p.id = :productId
+      AND p.status = 'published'
+      AND v.status = 'active'
+      AND v.registration_status = 'registered'
+    LIMIT 1
+  `, { productId });
+
+  const row = rows[0];
+  if (!row) return null;
+  const originalPrice = Number(row.price || 0);
+  const discount = await bestDiscountForProduct(row, null, originalPrice);
+  const price = discountedUnitPrice(originalPrice, discount);
+  const images = asJsonArray(row.images)
+    .sort((a, b) => Number(a.sortOrder || 0) - Number(b.sortOrder || 0));
+  return {
+    ...row,
+    category: row.category === 'food' ? 'Food' : 'Products',
+    originalPrice,
+    price,
+    hasDiscount: price < originalPrice,
+    discount: normalizeDiscount(discount),
+    stockQuantity: Number(row.stockQuantity || 0),
+    featuredUntil: row.featuredUntil || null,
+    isFeatured: Boolean(row.featuredUntil),
+    imageUrl: row.imageUrl || images[0]?.url || '',
+    images,
+    rating: 4.8
+  };
 }
 
 async function listSubscriptionPlans() {
@@ -778,7 +858,18 @@ async function findServiceById(id) {
 
 async function listFoods() {
   const rows = await query(`
-    SELECT p.id, p.name, p.vendor_id AS vendorId, p.store_id AS storeId, p.price_jmd AS price, p.description, product_image.imageUrl
+    SELECT
+      p.id,
+      p.name,
+      p.vendor_id AS vendorId,
+      p.store_id AS storeId,
+      v.business_name AS vendorName,
+      st.slug AS storeSlug,
+      st.name AS storeName,
+      p.price_jmd AS price,
+      p.description,
+      p.delivery_day AS deliveryDay,
+      product_image.imageUrl
     FROM products p
     JOIN vendors v ON v.id = p.vendor_id
     ${publicVendorSubscriptionJoin()}
@@ -1161,6 +1252,7 @@ async function cartItemsForCart(cartId) {
       ci.vendor_id AS vendorId,
       v.business_name AS vendorName,
       ci.store_id AS storeId,
+      st.slug AS vendorSlug,
       ci.unit_price_jmd AS price,
       p.stock_quantity AS stockQuantity,
       p.delivery_day AS deliveryDay,
@@ -2030,6 +2122,7 @@ async function findOrderById(orderId, customerUserId = null) {
       oi.store_id AS storeId,
       v.business_name AS vendorName,
       s.name AS storeName,
+      s.slug AS storeSlug,
       oi.fulfillment_status AS fulfillmentStatus,
       oi.vendor_completed_at AS vendorCompletedAt,
       oi.customer_received_at AS customerReceivedAt,
@@ -6119,6 +6212,7 @@ module.exports = {
   findVendorDocumentById,
   findPublicJobById,
   findPaymentSessionById,
+  findPublicProductById,
   findServiceById,
   findUserById,
   findVendorBySlug,

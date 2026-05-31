@@ -64,15 +64,15 @@ type MarketFilter = 'all' | 'products' | 'foods' | 'services';
           <div class="product-grid">
             @for (product of filteredProducts(); track product.id) {
               <article class="product-card">
-                <div class="product-image" [class.has-photo]="product.imageUrl">
+                <a class="product-image product-image-link" [class.has-photo]="product.imageUrl" [routerLink]="['/vendor', product.storeSlug || vendorSlug(product.vendorId), 'product', product.id]">
                   @if (product.imageUrl) {
                     <img [src]="product.imageUrl" [alt]="product.name" loading="lazy" decoding="async">
                   } @else {
                     <span class="visual-icon">{{ labelFor(product.category) }}</span>{{ product.category }}
                   }
-                </div>
+                </a>
                 <p class="product-tag">Delivery: {{ product.deliveryDay }}</p>
-                <h3>{{ product.name }}</h3>
+                <h3><a class="product-name-link" [routerLink]="['/vendor', product.storeSlug || vendorSlug(product.vendorId), 'product', product.id]">{{ product.name }}</a></h3>
                 <p>{{ product.description }}</p>
                 <p class="product-meta">{{ vendorName(product.vendorId) }} · {{ product.rating }} star</p>
                 <div class="product-footer">
@@ -97,14 +97,14 @@ type MarketFilter = 'all' | 'products' | 'foods' | 'services';
           <div class="product-grid">
             @for (food of filteredFoods(); track food.id) {
               <article class="product-card">
-                <div class="product-image" [class.has-photo]="food.imageUrl">
+                <a class="product-image product-image-link" [class.has-photo]="food.imageUrl" [routerLink]="['/vendor', food.storeSlug || vendorSlug(food.vendorId), 'product', food.id]">
                   @if (food.imageUrl) {
                     <img [src]="food.imageUrl" [alt]="food.name" loading="lazy" decoding="async">
                   } @else {
                     <span class="visual-icon">Food</span>Food
                   }
-                </div>
-                <h3>{{ food.name }}</h3>
+                </a>
+                <h3><a class="product-name-link" [routerLink]="['/vendor', food.storeSlug || vendorSlug(food.vendorId), 'product', food.id]">{{ food.name }}</a></h3>
                 <p>{{ food.description }}</p>
                 <p class="product-meta">{{ vendorName(food.vendorId) }}</p>
                 <div class="product-footer">

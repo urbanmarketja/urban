@@ -20,6 +20,10 @@ interface OrderItem {
   vendorCompletedAt?: string | null;
   customerReceivedAt?: string | null;
   fundsReleasedAt?: string | null;
+  customizationSummary?: string | string[];
+  customizationAddOnTotal?: number;
+  customizations?: unknown[];
+  customizationPreviews?: unknown[];
 }
 
 interface OrderDetail {
@@ -138,10 +142,21 @@ interface OrderDetail {
                         @for (item of store.items; track item.id || item.name) {
                           <tr>
                             <td>
+                              @if (customizationPreviewImage(item)) {
+                                <div class="cart-custom-preview order-custom-preview">
+                                  <img [src]="customizationPreviewImage(item)" [alt]="item.name + ' customization preview'" loading="lazy" decoding="async">
+                                </div>
+                              }
                               @if (item.productId && item.storeSlug) {
                                 <a class="product-name-link" [routerLink]="['/vendor', item.storeSlug, 'product', item.productId]">{{ item.name }}</a>
                               } @else {
                                 {{ item.name }}
+                              }
+                              @if (customizationSummary(item)) {
+                                <span class="product-meta order-custom-summary">Custom: {{ customizationSummary(item) }}</span>
+                              }
+                              @if (customizationAddOnTotal(item)) {
+                                <span class="product-meta order-custom-summary">Customization add-ons: {{ money(customizationAddOnTotal(item)) }}</span>
                               }
                             </td>
                             <td>{{ item.qty }}</td>
@@ -269,6 +284,31 @@ export class OrderDetailPage implements OnInit {
     return Number(item.lineTotal ?? Number(item.price || 0) * Number(item.qty || 1));
   }
 
+  protected customizationSummary(item: OrderItem): string {
+    const summary = item.customizationSummary;
+    if (Array.isArray(summary)) return summary.filter(Boolean).join(', ');
+    if (summary) return String(summary);
+    const rows = Array.isArray(item.customizations) ? item.customizations : [];
+    return rows
+      .map((row: any) => `${row.fieldLabel || row.fieldKey}: ${row.valueText || ''}`)
+      .filter(Boolean)
+      .join(', ');
+  }
+
+  protected customizationPreviewImage(item: OrderItem): string {
+    const preview = this.firstCustomizationPreview(item);
+    const json = preview?.previewJson || {};
+    return String(preview?.previewImageUrl || json.baseImageUrl || json.imageUrl || json.url || '');
+  }
+
+  protected customizationAddOnTotal(item: OrderItem): number {
+    if (item.customizationAddOnTotal !== undefined && item.customizationAddOnTotal !== null) {
+      return Number(item.customizationAddOnTotal || 0);
+    }
+    const rows = Array.isArray(item.customizations) ? item.customizations : [];
+    return rows.reduce((sum: number, row: any) => sum + Number(row?.priceDeltaJmd || 0), 0);
+  }
+
   protected paymentLabel(order: OrderDetail): string {
     const status = order.paymentStatus || order.paymentSessionStatus || order.paymentSession?.status || 'pending';
     if (status === 'paid') return 'Paid';
@@ -307,5 +347,10 @@ export class OrderDetailPage implements OnInit {
     } finally {
       this.isWorking.set(false);
     }
+  }
+
+  private firstCustomizationPreview(item: OrderItem): any | null {
+    const previews = Array.isArray(item.customizationPreviews) ? item.customizationPreviews : [];
+    return previews.find((preview) => preview && typeof preview === 'object') || null;
   }
 }

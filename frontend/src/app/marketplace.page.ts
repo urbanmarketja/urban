@@ -85,7 +85,11 @@ type MarketFilter = 'all' | 'products' | 'foods' | 'services';
                       <span class="discount-badge">{{ discountLabel(product) }}</span>
                     }
                   </div>
-                  <button class="button-sm" type="button" (click)="cart.addProduct(product)">Add</button>
+                  @if (product.isCustomizable) {
+                    <a class="button-sm" [routerLink]="['/vendor', product.storeSlug || vendorSlug(product.vendorId), 'product', product.id]">Customize</a>
+                  } @else {
+                    <button class="button-sm" type="button" (click)="cart.addProduct(product)">Add</button>
+                  }
                   <a class="button-sm light" [routerLink]="['/vendor', vendorSlug(product.vendorId)]">Store</a>
                 </div>
               </article>

@@ -1,7 +1,7 @@
 const config = require('../config');
 const { buildOrderCheckout, buildServiceCheckout, buildSubscriptionCheckout } = require('../payments');
 const { query, transaction } = require('../db/mysql');
-const { randomUUID } = require('crypto');
+const { createHash, randomUUID } = require('crypto');
 const fs = require('fs/promises');
 const path = require('path');
 
@@ -15,6 +15,7 @@ const MAX_LISTING_IMAGE_BYTES = 8 * 1024 * 1024;
 const RESUME_UPLOAD_DIR = config.uploadDir || path.join(__dirname, '..', 'uploads', 'resumes');
 const VENDOR_DOCUMENT_UPLOAD_DIR = path.join(path.dirname(RESUME_UPLOAD_DIR), 'vendor-documents');
 const LISTING_MEDIA_UPLOAD_DIR = path.join(path.dirname(RESUME_UPLOAD_DIR), 'listing-media');
+const CUSTOMIZATION_MEDIA_UPLOAD_DIR = path.join(path.dirname(RESUME_UPLOAD_DIR), 'customization-media');
 const VENDOR_DOCUMENT_TYPES = new Map([
   ['application/pdf', ['.pdf']],
   ['image/heic', ['.heic']],
@@ -33,6 +34,10 @@ const LISTING_IMAGE_TYPES = new Map([
   ['image/webp', ['.webp']]
 ]);
 const STORE_SOCIAL_PLATFORMS = new Set(['facebook', 'instagram', 'whatsapp', 'tiktok', 'x', 'youtube', 'website']);
+const CUSTOMIZATION_FIELD_TYPES = new Set(['text', 'number', 'color', 'select', 'checkbox', 'image']);
+const CUSTOMIZATION_TEMPLATE_STATUSES = new Set(['draft', 'active', 'paused']);
+const CUSTOMIZATION_FIELD_STATUSES = new Set(['active', 'hidden']);
+const CUSTOMIZATION_TEXT_ALIGNMENTS = new Set(['left', 'center', 'right']);
 
 function latestVendorSubscriptionJoin(alias = 'sub') {
   return `
@@ -88,6 +93,22 @@ function productImageGalleryJoin(alias = 'product_gallery') {
         )) AS images
       FROM product_images
       GROUP BY product_id
+    ) ${alias} ON ${alias}.productId = p.id
+  `;
+}
+
+function primaryProductCustomizationImageJoin(alias = 'customization_image', activeOnly = true) {
+  return `
+    LEFT JOIN (
+      SELECT
+        t.product_id AS productId,
+        SUBSTRING_INDEX(GROUP_CONCAT(s.base_image_url ORDER BY s.sort_order, s.created_at SEPARATOR '||'), '||', 1) AS imageUrl
+      FROM product_customization_templates t
+      JOIN product_customization_surfaces s ON s.template_id = t.id
+      WHERE s.base_image_url IS NOT NULL
+        AND s.base_image_url <> ''
+        ${activeOnly ? "AND t.status = 'active'" : ''}
+      GROUP BY t.product_id
     ) ${alias} ON ${alias}.productId = p.id
   `;
 }
@@ -370,6 +391,265 @@ function normalizePaymentSession(session) {
   };
 }
 
+function customizationKey(value, fallback = 'field') {
+  const key = slugFor(value || fallback).replace(/-/g, '_').slice(0, 80);
+  return key || fallback;
+}
+
+function customizationStatus(value, allowed, fallback) {
+  const normalized = String(value || '').toLowerCase();
+  return allowed.has(normalized) ? normalized : fallback;
+}
+
+function intOrNull(value) {
+  if (value === undefined || value === null || value === '') return null;
+  const number = Number(value);
+  return Number.isFinite(number) ? Math.floor(number) : null;
+}
+
+function numberOrNull(value) {
+  if (value === undefined || value === null || value === '') return null;
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+}
+
+function nonNegativeInt(value, fallback = 0) {
+  const number = Math.floor(Number(value));
+  return Number.isFinite(number) && number >= 0 ? number : fallback;
+}
+
+function normalizeCustomizationOption(row) {
+  return {
+    id: row.id,
+    fieldId: row.fieldId,
+    optionValue: row.optionValue,
+    label: row.label,
+    swatchColor: row.swatchColor || null,
+    priceDeltaJmd: Number(row.priceDeltaJmd || 0),
+    sortOrder: Number(row.sortOrder || 0),
+    status: row.status || 'active',
+    createdAt: row.createdAt || null,
+    updatedAt: row.updatedAt || null
+  };
+}
+
+function normalizeCustomizationPlacement(row) {
+  return {
+    id: row.id,
+    fieldId: row.fieldId,
+    surfaceId: row.surfaceId,
+    xPercent: Number(row.xPercent ?? 50),
+    yPercent: Number(row.yPercent ?? 50),
+    widthPercent: Number(row.widthPercent ?? 30),
+    heightPercent: Number(row.heightPercent ?? 10),
+    rotationDegrees: Number(row.rotationDegrees ?? 0),
+    fontFamily: row.fontFamily || null,
+    fontSizePercent: row.fontSizePercent === null || row.fontSizePercent === undefined ? null : Number(row.fontSizePercent),
+    fontWeight: row.fontWeight || null,
+    textAlign: row.textAlign || 'center',
+    textColor: row.textColor || null,
+    backgroundColor: row.backgroundColor || null,
+    zIndex: Number(row.zIndex || 1),
+    createdAt: row.createdAt || null,
+    updatedAt: row.updatedAt || null
+  };
+}
+
+function normalizeCustomizationField(row, options = [], placements = []) {
+  return {
+    id: row.id,
+    templateId: row.templateId,
+    fieldKey: row.fieldKey,
+    label: row.label,
+    fieldType: row.fieldType,
+    placeholder: row.placeholder || '',
+    helpText: row.helpText || '',
+    isRequired: Boolean(row.isRequired),
+    defaultValue: row.defaultValue ?? null,
+    minLength: intOrNull(row.minLength),
+    maxLength: intOrNull(row.maxLength),
+    minValue: numberOrNull(row.minValue),
+    maxValue: numberOrNull(row.maxValue),
+    priceDeltaJmd: Number(row.priceDeltaJmd || 0),
+    status: row.status || 'active',
+    sortOrder: Number(row.sortOrder || 0),
+    createdAt: row.createdAt || null,
+    updatedAt: row.updatedAt || null,
+    options,
+    placements
+  };
+}
+
+function normalizeCustomizationSurface(row) {
+  return {
+    id: row.id,
+    templateId: row.templateId,
+    name: row.name,
+    surfaceKey: row.surfaceKey,
+    baseImageUrl: row.baseImageUrl || '',
+    widthPx: intOrNull(row.widthPx),
+    heightPx: intOrNull(row.heightPx),
+    sortOrder: Number(row.sortOrder || 0),
+    createdAt: row.createdAt || null,
+    updatedAt: row.updatedAt || null
+  };
+}
+
+function normalizeCustomizationTemplate(row, surfaces = [], fields = []) {
+  if (!row) return null;
+  return {
+    id: row.id,
+    productId: row.productId,
+    productName: row.productName || null,
+    vendorId: row.vendorId || null,
+    vendorName: row.vendorName || null,
+    storeId: row.storeId || null,
+    storeName: row.storeName || null,
+    storeSlug: row.storeSlug || null,
+    productType: row.productType || 'other',
+    title: row.title || '',
+    instructions: row.instructions || '',
+    previewMode: row.previewMode || 'live_preview',
+    status: row.status || 'draft',
+    createdAt: row.createdAt || null,
+    updatedAt: row.updatedAt || null,
+    surfaces,
+    fields
+  };
+}
+
+function customizationSurfaceGalleryImages(template, productName = '') {
+  return (template?.surfaces || [])
+    .filter((surface) => surface?.baseImageUrl)
+    .map((surface, index) => ({
+      id: `customization-surface-${surface.id || surface.surfaceKey || index}`,
+      url: normalizeStoredMediaUrl(surface.baseImageUrl),
+      altText: `${productName || 'Product'} ${surface.name || 'customizer'} view`,
+      sortOrder: 1000 + Number(surface.sortOrder || index),
+      sourceType: 'customization_surface',
+      surfaceKey: surface.surfaceKey || null,
+      surfaceName: surface.name || null
+    }));
+}
+
+function mergeProductGalleryImages(images, customizationTemplate, productName = '') {
+  const seen = new Set();
+  return [
+    ...(images || []),
+    ...customizationSurfaceGalleryImages(customizationTemplate, productName)
+  ].filter((image) => {
+    const url = normalizeStoredMediaUrl(image?.url || '');
+    if (!url) return false;
+    const key = url.toLowerCase();
+    if (seen.has(key)) return false;
+    seen.add(key);
+    image.url = url;
+    return true;
+  }).sort((a, b) => Number(a.sortOrder || 0) - Number(b.sortOrder || 0));
+}
+
+function groupByValue(rows, key) {
+  const grouped = new Map();
+  for (const row of rows) {
+    const value = row[key];
+    const list = grouped.get(value) || [];
+    list.push(row);
+    grouped.set(value, list);
+  }
+  return grouped;
+}
+
+function customizationValuesMap(input) {
+  const hasExplicitValues = input
+    && typeof input === 'object'
+    && (
+      Object.prototype.hasOwnProperty.call(input, 'customizations')
+      || Object.prototype.hasOwnProperty.call(input, 'customizationValues')
+      || Object.prototype.hasOwnProperty.call(input, 'values')
+    );
+  const requestKeys = new Set(['productId', 'qty', 'quantity', 'previews', 'customizationPreviews', 'preview', 'previewReferences', 'customer', 'paymentMethod']);
+  const looksLikeRequestBody = input
+    && typeof input === 'object'
+    && Object.keys(input).some((key) => requestKeys.has(key));
+  const raw = hasExplicitValues
+    ? input.customizations ?? input.customizationValues ?? input.values ?? {}
+    : looksLikeRequestBody ? {} : input ?? {};
+  const map = new Map();
+  if (Array.isArray(raw)) {
+    for (const item of raw) {
+      if (!item || typeof item !== 'object') continue;
+      const keys = [item.fieldId, item.fieldKey, item.key, item.name].filter(Boolean);
+      for (const key of keys) {
+        map.set(String(key), item);
+      }
+    }
+    return map;
+  }
+  if (raw && typeof raw === 'object') {
+    for (const [key, value] of Object.entries(raw)) {
+      map.set(key, { fieldKey: key, value });
+    }
+  }
+  return map;
+}
+
+function customizationValueFromRecord(record) {
+  if (!record || typeof record !== 'object') return undefined;
+  if (Object.prototype.hasOwnProperty.call(record, 'value')) return record.value;
+  if (record.fieldType === 'image' && Object.prototype.hasOwnProperty.call(record, 'valueJson')) return record.valueJson;
+  if (Object.prototype.hasOwnProperty.call(record, 'valueText')) return record.valueText;
+  if (Object.prototype.hasOwnProperty.call(record, 'valueJson')) return record.valueJson;
+  if (Object.prototype.hasOwnProperty.call(record, 'url')) return record.url;
+  if (Object.prototype.hasOwnProperty.call(record, 'imageUrl')) return record.imageUrl;
+  return undefined;
+}
+
+function customizationValueText(value) {
+  if (value === undefined || value === null) return '';
+  if (typeof value === 'object') {
+    return String(value.label || value.name || value.url || value.imageUrl || JSON.stringify(value));
+  }
+  return String(value);
+}
+
+function normalizeCustomizationPreviews(input) {
+  const raw = input?.previews ?? input?.customizationPreviews ?? input?.previewReferences ?? input?.preview ?? [];
+  const list = Array.isArray(raw)
+    ? raw
+    : raw && typeof raw === 'object'
+      ? Object.entries(raw).map(([surfaceKey, value]) => (
+          value && typeof value === 'object'
+            ? { surfaceKey, ...value }
+            : { surfaceKey, previewImageUrl: value }
+        ))
+      : [];
+
+  return list
+    .filter((preview) => preview && typeof preview === 'object')
+    .map((preview) => ({
+      surfaceKey: customizationKey(preview.surfaceKey || preview.key || 'surface', 'surface'),
+      previewImageUrl: preview.previewImageUrl || preview.imageUrl || preview.url || null,
+      previewJson: preview.previewJson ?? preview.layout ?? preview.data ?? null
+    }));
+}
+
+function customizationSignature(customizations, previews = []) {
+  if (!customizations.length && !previews.length) return '';
+  const payload = {
+    customizations: customizations.map((item) => ({
+      fieldKey: item.fieldKey,
+      valueText: item.valueText || '',
+      valueJson: item.valueJson || null
+    })),
+    previews: previews.map((preview) => ({
+      surfaceKey: preview.surfaceKey,
+      previewImageUrl: preview.previewImageUrl || null,
+      previewJson: preview.previewJson || null
+    }))
+  };
+  return createHash('sha256').update(JSON.stringify(payload)).digest('hex').slice(0, 32);
+}
+
 function coordinateOrNull(value, min, max) {
   if (value === undefined || value === null || value === '') return null;
   const number = Number(value);
@@ -514,7 +794,9 @@ async function saveResumeUpload(applicationId, body) {
   await fs.mkdir(RESUME_UPLOAD_DIR, { recursive: true });
   const fileName = `${applicationId}-${resumeName}`;
   await fs.writeFile(path.join(RESUME_UPLOAD_DIR, fileName), buffer);
-  return `uploads/resumes/${fileName}`;
+  const storageKey = `uploads/resumes/${fileName}`;
+  await saveUploadedMedia(storageKey, fileName, 'resume', mimeType, buffer);
+  return storageKey;
 }
 
 async function saveVendorDocumentUpload(documentId, body) {
@@ -545,12 +827,73 @@ async function saveVendorDocumentUpload(documentId, body) {
   const documentName = safeDocumentFileName(body.documentName, mimeType);
   const fileName = `${documentId}-${documentName}`;
   await fs.writeFile(path.join(VENDOR_DOCUMENT_UPLOAD_DIR, fileName), buffer);
-  return `uploads/vendor-documents/${fileName}`;
+  const storageKey = `uploads/vendor-documents/${fileName}`;
+  await saveUploadedMedia(storageKey, fileName, 'vendor_document', mimeType, buffer);
+  return storageKey;
+}
+
+function storageKeyHash(storageKey) {
+  return createHash('sha256').update(String(storageKey || '')).digest('hex');
+}
+
+async function saveUploadedMedia(storageKey, fileName, mediaGroup, contentType, buffer) {
+  if (!config.useDatabase || !Buffer.isBuffer(buffer) || !buffer.length) return;
+
+  try {
+    await query(`
+      INSERT INTO uploaded_media (id, storage_key_hash, storage_key, file_name, media_group, content_type, size_bytes, data)
+      VALUES (:id, :storageKeyHash, :storageKey, :fileName, :mediaGroup, :contentType, :sizeBytes, :data)
+      ON DUPLICATE KEY UPDATE
+        storage_key = VALUES(storage_key),
+        file_name = VALUES(file_name),
+        media_group = VALUES(media_group),
+        content_type = VALUES(content_type),
+        size_bytes = VALUES(size_bytes),
+        data = VALUES(data)
+    `, {
+      id: randomUUID(),
+      storageKeyHash: storageKeyHash(storageKey),
+      storageKey,
+      fileName,
+      mediaGroup,
+      contentType: contentType || 'application/octet-stream',
+      sizeBytes: buffer.length,
+      data: buffer
+    });
+  } catch (error) {
+    if (['ER_NO_SUCH_TABLE', 'ER_BAD_FIELD_ERROR'].includes(error.code)) {
+      console.warn('Uploaded media database backup skipped because uploaded_media is not available yet.');
+      return;
+    }
+    throw error;
+  }
+}
+
+function normalizeStoredMediaUrl(value) {
+  const text = String(value || '').trim();
+  if (!text) return '';
+  if (/^https?:\/\//i.test(text)) {
+    try {
+      const parsed = new URL(text);
+      if (parsed.pathname.startsWith('/api/uploads/')) {
+        return `${parsed.pathname.replace(/^\/api\//, '')}${parsed.search}`;
+      }
+      if (parsed.pathname.startsWith('/uploads/')) {
+        return `${parsed.pathname.replace(/^\//, '')}${parsed.search}`;
+      }
+    } catch {
+      return text;
+    }
+    return text;
+  }
+  return text
+    .replace(/^\/api\/uploads\//, 'uploads/')
+    .replace(/^\/uploads\//, 'uploads/');
 }
 
 async function saveListingImageUpload(imageId, body) {
   if (!body.imageDataBase64) {
-    return body.url || body.imageUrl || null;
+    return normalizeStoredMediaUrl(body.url || body.imageUrl || '') || null;
   }
 
   const mimeType = String(body.imageMimeType || '').toLowerCase();
@@ -576,7 +919,42 @@ async function saveListingImageUpload(imageId, body) {
   const imageName = safeListingImageFileName(body.imageName, mimeType);
   const fileName = `${imageId}-${imageName}`;
   await fs.writeFile(path.join(LISTING_MEDIA_UPLOAD_DIR, fileName), buffer);
-  return `uploads/listing-media/${fileName}`;
+  const storageKey = `uploads/listing-media/${fileName}`;
+  await saveUploadedMedia(storageKey, fileName, 'listing', mimeType, buffer);
+  return storageKey;
+}
+
+async function saveCustomizationImageUpload(imageId, body) {
+  if (!body.imageDataBase64) {
+    return normalizeStoredMediaUrl(body.url || body.imageUrl || '') || null;
+  }
+
+  const mimeType = String(body.imageMimeType || '').toLowerCase();
+  if (!LISTING_IMAGE_TYPES.has(mimeType)) {
+    const error = new Error('Upload a JPG, PNG, WEBP, HEIC, or HEIF image');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const buffer = Buffer.from(String(body.imageDataBase64), 'base64');
+  if (!buffer.length || buffer.length > MAX_LISTING_IMAGE_BYTES) {
+    const error = new Error('Customer customization image must be 8 MB or smaller');
+    error.statusCode = 400;
+    throw error;
+  }
+  if (!looksLikeAllowedImage(buffer, mimeType)) {
+    const error = new Error('Uploaded customization image does not match the selected image type');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  await fs.mkdir(CUSTOMIZATION_MEDIA_UPLOAD_DIR, { recursive: true });
+  const imageName = safeListingImageFileName(body.imageName, mimeType);
+  const fileName = `${imageId}-${imageName}`;
+  await fs.writeFile(path.join(CUSTOMIZATION_MEDIA_UPLOAD_DIR, fileName), buffer);
+  const storageKey = `uploads/customization-media/${fileName}`;
+  await saveUploadedMedia(storageKey, fileName, 'customization', mimeType, buffer);
+  return storageKey;
 }
 
 function contentTypeForDocument(fileName) {
@@ -703,12 +1081,17 @@ async function listProducts() {
       p.delivery_day AS deliveryDay,
       p.description,
       product_image.imageUrl,
+      customization_image.imageUrl AS customizationImageUrl,
+      customization_template.id AS customizationTemplateId,
       feature.featuredUntil
     FROM products p
     JOIN vendors v ON v.id = p.vendor_id
     ${publicVendorSubscriptionJoin()}
     JOIN stores st ON st.id = p.store_id AND st.status NOT IN ('paused', 'suspended')
     ${primaryProductImageJoin()}
+    ${primaryProductCustomizationImageJoin()}
+    LEFT JOIN product_customization_templates customization_template
+      ON customization_template.product_id = p.id AND customization_template.status = 'active'
     LEFT JOIN (
       SELECT product_id AS productId, MAX(ends_at) AS featuredUntil
       FROM product_features
@@ -733,8 +1116,10 @@ async function listProducts() {
       hasDiscount: price < originalPrice,
       discount: normalizeDiscount(discount),
       stockQuantity: Number(row.stockQuantity || 0),
+      imageUrl: row.imageUrl || row.customizationImageUrl || '',
       featuredUntil: row.featuredUntil || null,
       isFeatured: Boolean(row.featuredUntil),
+      isCustomizable: Boolean(row.customizationTemplateId),
       rating: 4.8
     };
   }));
@@ -756,6 +1141,7 @@ async function findPublicProductById(productId) {
       p.delivery_day AS deliveryDay,
       p.description,
       product_image.imageUrl,
+      customization_image.imageUrl AS customizationImageUrl,
       product_gallery.images,
       feature.featuredUntil
     FROM products p
@@ -763,6 +1149,7 @@ async function findPublicProductById(productId) {
     ${publicVendorSubscriptionJoin()}
     JOIN stores st ON st.id = p.store_id AND st.status NOT IN ('paused', 'suspended')
     ${primaryProductImageJoin()}
+    ${primaryProductCustomizationImageJoin()}
     ${productImageGalleryJoin()}
     LEFT JOIN (
       SELECT product_id AS productId, MAX(ends_at) AS featuredUntil
@@ -782,8 +1169,10 @@ async function findPublicProductById(productId) {
   const originalPrice = Number(row.price || 0);
   const discount = await bestDiscountForProduct(row, null, originalPrice);
   const price = discountedUnitPrice(originalPrice, discount);
-  const images = asJsonArray(row.images)
+  const productImages = asJsonArray(row.images)
     .sort((a, b) => Number(a.sortOrder || 0) - Number(b.sortOrder || 0));
+  const customizationTemplate = await customizationTemplateByProductId(productId, { publicOnly: true });
+  const images = mergeProductGalleryImages(productImages, customizationTemplate, row.name);
   return {
     ...row,
     category: row.category === 'food' ? 'Food' : 'Products',
@@ -794,10 +1183,674 @@ async function findPublicProductById(productId) {
     stockQuantity: Number(row.stockQuantity || 0),
     featuredUntil: row.featuredUntil || null,
     isFeatured: Boolean(row.featuredUntil),
-    imageUrl: row.imageUrl || images[0]?.url || '',
+    imageUrl: row.imageUrl || row.customizationImageUrl || images[0]?.url || '',
     images,
+    customizationTemplate,
+    isCustomizable: Boolean(customizationTemplate),
     rating: 4.8
   };
+}
+
+async function hydrateCustomizationTemplates(rows) {
+  if (!rows.length) return [];
+  const templateIds = rows.map((row) => row.id);
+  const idList = templateIds.join(',');
+  const [surfaceRows, fieldRows, optionRows, placementRows] = await Promise.all([
+    query(`
+      SELECT id, template_id AS templateId, name, surface_key AS surfaceKey, base_image_url AS baseImageUrl, width_px AS widthPx, height_px AS heightPx, sort_order AS sortOrder, created_at AS createdAt, updated_at AS updatedAt
+      FROM product_customization_surfaces
+      WHERE FIND_IN_SET(template_id, :templateIds)
+      ORDER BY sort_order, created_at
+    `, { templateIds: idList }),
+    query(`
+      SELECT id, template_id AS templateId, field_key AS fieldKey, label, field_type AS fieldType, placeholder, help_text AS helpText, is_required AS isRequired, default_value AS defaultValue, min_length AS minLength, max_length AS maxLength, min_value AS minValue, max_value AS \`maxValue\`, price_delta_jmd AS priceDeltaJmd, status, sort_order AS sortOrder, created_at AS createdAt, updated_at AS updatedAt
+      FROM product_customization_fields
+      WHERE FIND_IN_SET(template_id, :templateIds)
+      ORDER BY sort_order, created_at
+    `, { templateIds: idList }),
+    query(`
+      SELECT o.id, o.field_id AS fieldId, o.option_value AS optionValue, o.label, o.swatch_color AS swatchColor, o.price_delta_jmd AS priceDeltaJmd, o.sort_order AS sortOrder, o.status, o.created_at AS createdAt, o.updated_at AS updatedAt
+      FROM product_customization_field_options o
+      JOIN product_customization_fields f ON f.id = o.field_id
+      WHERE FIND_IN_SET(f.template_id, :templateIds)
+      ORDER BY o.sort_order, o.created_at
+    `, { templateIds: idList }),
+    query(`
+      SELECT p.id, p.field_id AS fieldId, p.surface_id AS surfaceId, p.x_percent AS xPercent, p.y_percent AS yPercent, p.width_percent AS widthPercent, p.height_percent AS heightPercent, p.rotation_degrees AS rotationDegrees, p.font_family AS fontFamily, p.font_size_percent AS fontSizePercent, p.font_weight AS fontWeight, p.text_align AS textAlign, p.text_color AS textColor, p.background_color AS backgroundColor, p.z_index AS zIndex, p.created_at AS createdAt, p.updated_at AS updatedAt
+      FROM product_customization_placements p
+      JOIN product_customization_fields f ON f.id = p.field_id
+      WHERE FIND_IN_SET(f.template_id, :templateIds)
+      ORDER BY p.z_index, p.created_at
+    `, { templateIds: idList })
+  ]);
+  const surfacesByTemplate = groupByValue(surfaceRows.map(normalizeCustomizationSurface), 'templateId');
+  const optionsByField = groupByValue(optionRows.map(normalizeCustomizationOption), 'fieldId');
+  const placementsByField = groupByValue(placementRows.map(normalizeCustomizationPlacement), 'fieldId');
+  const fieldsByTemplate = groupByValue(fieldRows.map((field) => normalizeCustomizationField(
+    field,
+    optionsByField.get(field.id) || [],
+    placementsByField.get(field.id) || []
+  )), 'templateId');
+
+  return rows.map((row) => normalizeCustomizationTemplate(
+    row,
+    surfacesByTemplate.get(row.id) || [],
+    fieldsByTemplate.get(row.id) || []
+  ));
+}
+
+async function listCustomizationTemplates(filters = {}) {
+  const where = [];
+  const params = {};
+  if (filters.productId) {
+    where.push('t.product_id = :productId');
+    params.productId = filters.productId;
+  }
+  if (filters.templateId) {
+    where.push('t.id = :templateId');
+    params.templateId = filters.templateId;
+  }
+  if (filters.status) {
+    where.push('t.status = :status');
+    params.status = filters.status;
+  }
+  if (filters.publicOnly) {
+    where.push("t.status = 'active'");
+    where.push("p.status = 'published'");
+    where.push("v.status = 'active'");
+    where.push("v.registration_status = 'registered'");
+    where.push("st.status NOT IN ('paused', 'suspended')");
+  }
+  if (filters.vendorIds?.length) {
+    where.push('FIND_IN_SET(p.vendor_id, :vendorIds)');
+    params.vendorIds = filters.vendorIds.join(',');
+  }
+  const rows = await query(`
+    SELECT
+      t.id,
+      t.product_id AS productId,
+      p.name AS productName,
+      p.vendor_id AS vendorId,
+      v.business_name AS vendorName,
+      p.store_id AS storeId,
+      st.name AS storeName,
+      st.slug AS storeSlug,
+      t.product_type AS productType,
+      t.title,
+      t.instructions,
+      t.preview_mode AS previewMode,
+      t.status,
+      t.created_at AS createdAt,
+      t.updated_at AS updatedAt
+    FROM product_customization_templates t
+    JOIN products p ON p.id = t.product_id
+    JOIN vendors v ON v.id = p.vendor_id
+    ${filters.publicOnly ? publicVendorSubscriptionJoin() : ''}
+    JOIN stores st ON st.id = p.store_id
+    ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
+    ORDER BY t.updated_at DESC, t.created_at DESC
+  `, params);
+
+  return hydrateCustomizationTemplates(rows);
+}
+
+async function customizationTemplateByProductId(productId, options = {}) {
+  const templates = await listCustomizationTemplates({
+    productId,
+    publicOnly: Boolean(options.publicOnly),
+    status: options.status
+  });
+  return templates[0] || null;
+}
+
+async function customizationTemplateById(templateId, options = {}) {
+  const templates = await listCustomizationTemplates({
+    templateId,
+    publicOnly: Boolean(options.publicOnly),
+    status: options.status
+  });
+  return templates[0] || null;
+}
+
+async function productForCustomization(productId) {
+  const rows = await query(`
+    SELECT p.id, p.name, p.vendor_id AS vendorId, p.store_id AS storeId
+    FROM products p
+    WHERE p.id = :productId
+    LIMIT 1
+  `, { productId });
+  return rows[0] || null;
+}
+
+async function vendorIdForCustomizationTemplate(templateId) {
+  const rows = await query(`
+    SELECT p.vendor_id AS vendorId
+    FROM product_customization_templates t
+    JOIN products p ON p.id = t.product_id
+    WHERE t.id = :templateId
+    LIMIT 1
+  `, { templateId });
+  return rows[0]?.vendorId || null;
+}
+
+async function vendorIdForCustomizationSurface(surfaceId) {
+  const rows = await query(`
+    SELECT p.vendor_id AS vendorId
+    FROM product_customization_surfaces s
+    JOIN product_customization_templates t ON t.id = s.template_id
+    JOIN products p ON p.id = t.product_id
+    WHERE s.id = :surfaceId
+    LIMIT 1
+  `, { surfaceId });
+  return rows[0]?.vendorId || null;
+}
+
+async function vendorIdForCustomizationField(fieldId) {
+  const rows = await query(`
+    SELECT p.vendor_id AS vendorId
+    FROM product_customization_fields f
+    JOIN product_customization_templates t ON t.id = f.template_id
+    JOIN products p ON p.id = t.product_id
+    WHERE f.id = :fieldId
+    LIMIT 1
+  `, { fieldId });
+  return rows[0]?.vendorId || null;
+}
+
+async function vendorIdForCustomizationOption(optionId) {
+  const rows = await query(`
+    SELECT p.vendor_id AS vendorId
+    FROM product_customization_field_options o
+    JOIN product_customization_fields f ON f.id = o.field_id
+    JOIN product_customization_templates t ON t.id = f.template_id
+    JOIN products p ON p.id = t.product_id
+    WHERE o.id = :optionId
+    LIMIT 1
+  `, { optionId });
+  return rows[0]?.vendorId || null;
+}
+
+async function vendorIdForCustomizationPlacement(placementId) {
+  const rows = await query(`
+    SELECT p.vendor_id AS vendorId
+    FROM product_customization_placements placement
+    JOIN product_customization_fields f ON f.id = placement.field_id
+    JOIN product_customization_templates t ON t.id = f.template_id
+    JOIN products p ON p.id = t.product_id
+    WHERE placement.id = :placementId
+    LIMIT 1
+  `, { placementId });
+  return rows[0]?.vendorId || null;
+}
+
+async function upsertProductCustomizationTemplate(productId, body = {}) {
+  const product = await productForCustomization(productId);
+  if (!product) {
+    const error = new Error('Product not found');
+    error.statusCode = 404;
+    throw error;
+  }
+  const existing = await customizationTemplateByProductId(productId);
+  const id = existing?.id || body.id || randomUUID();
+  const status = customizationStatus(body.status, CUSTOMIZATION_TEMPLATE_STATUSES, existing?.status || 'draft');
+  const previewMode = body.previewMode === 'form' ? 'form' : 'live_preview';
+  await query(`
+    INSERT INTO product_customization_templates (id, product_id, product_type, title, instructions, preview_mode, status)
+    VALUES (:id, :productId, :productType, :title, :instructions, :previewMode, :status)
+    ON DUPLICATE KEY UPDATE
+      product_type = VALUES(product_type),
+      title = VALUES(title),
+      instructions = VALUES(instructions),
+      preview_mode = VALUES(preview_mode),
+      status = VALUES(status)
+  `, {
+    id,
+    productId,
+    productType: customizationKey(body.productType || existing?.productType || 'other', 'other'),
+    title: body.title ?? existing?.title ?? '',
+    instructions: body.instructions ?? existing?.instructions ?? '',
+    previewMode,
+    status
+  });
+
+  const templateId = existing?.id || id;
+  const surfaceIdMap = new Map();
+  if (Array.isArray(body.surfaces)) {
+    const surfaceKeys = [...new Set(body.surfaces
+      .map((surface) => customizationKey(surface.surfaceKey || surface.key || surface.name || 'front', 'front'))
+      .filter(Boolean))];
+    for (const surface of body.surfaces) {
+      await saveCustomizationSurface(templateId, surface, surface.id || null);
+    }
+    if (surfaceKeys.length) {
+      const savedSurfaces = await query(`
+        SELECT id, surface_key AS surfaceKey
+        FROM product_customization_surfaces
+        WHERE template_id = :templateId AND FIND_IN_SET(surface_key, :surfaceKeys)
+      `, { templateId, surfaceKeys: surfaceKeys.join(',') });
+      const savedSurfaceByKey = new Map(savedSurfaces.map((surface) => [surface.surfaceKey, surface.id]));
+      for (const surface of body.surfaces) {
+        const key = customizationKey(surface.surfaceKey || surface.key || surface.name || 'front', 'front');
+        const savedId = savedSurfaceByKey.get(key);
+        if (surface.id && savedId) {
+          surfaceIdMap.set(surface.id, savedId);
+        }
+      }
+      await query(`
+        DELETE FROM product_customization_surfaces
+        WHERE template_id = :templateId AND NOT FIND_IN_SET(surface_key, :surfaceKeys)
+      `, { templateId, surfaceKeys: surfaceKeys.join(',') });
+    }
+  }
+  if (Array.isArray(body.fields)) {
+    const fields = body.fields.map((field) => ({
+      ...field,
+      placements: Array.isArray(field.placements)
+        ? field.placements.map((placement) => ({
+            ...placement,
+            surfaceId: surfaceIdMap.get(placement.surfaceId) || placement.surfaceId
+          }))
+        : field.placements
+    }));
+    const fieldKeys = [...new Set(fields
+      .map((field) => customizationKey(field.fieldKey || field.key || field.label || 'field', 'field'))
+      .filter(Boolean))];
+    for (const field of fields) {
+      await saveCustomizationField(templateId, field, field.id || null);
+    }
+    if (fieldKeys.length) {
+      await query(`
+        DELETE FROM product_customization_fields
+        WHERE template_id = :templateId AND NOT FIND_IN_SET(field_key, :fieldKeys)
+      `, { templateId, fieldKeys: fieldKeys.join(',') });
+    }
+  }
+  return customizationTemplateByProductId(productId);
+}
+
+async function updateCustomizationTemplateStatus(templateId, body = {}) {
+  const status = customizationStatus(body.status, CUSTOMIZATION_TEMPLATE_STATUSES, '');
+  if (!status) {
+    const error = new Error('Customization template status must be draft, active, or paused');
+    error.statusCode = 400;
+    throw error;
+  }
+  await query('UPDATE product_customization_templates SET status = :status WHERE id = :templateId', { templateId, status });
+  const template = await customizationTemplateById(templateId);
+  if (!template) {
+    const error = new Error('Customization template not found');
+    error.statusCode = 404;
+    throw error;
+  }
+  return template;
+}
+
+async function saveCustomizationSurface(templateId, body = {}, surfaceId = null) {
+  const template = await customizationTemplateById(templateId);
+  if (!template) {
+    const error = new Error('Customization template not found');
+    error.statusCode = 404;
+    throw error;
+  }
+  const requestedSurfaceKey = customizationKey(body.surfaceKey || body.key || body.name || 'front', 'front');
+  let existingRows = surfaceId ? await query(`
+    SELECT id, template_id AS templateId, name, surface_key AS surfaceKey, base_image_url AS baseImageUrl, width_px AS widthPx, height_px AS heightPx, sort_order AS sortOrder
+    FROM product_customization_surfaces
+    WHERE id = :surfaceId AND template_id = :templateId
+    LIMIT 1
+  `, { surfaceId, templateId }) : [];
+  if (!existingRows[0] && requestedSurfaceKey) {
+    existingRows = await query(`
+      SELECT id, template_id AS templateId, name, surface_key AS surfaceKey, base_image_url AS baseImageUrl, width_px AS widthPx, height_px AS heightPx, sort_order AS sortOrder
+      FROM product_customization_surfaces
+      WHERE template_id = :templateId AND surface_key = :surfaceKey
+      LIMIT 1
+    `, { templateId, surfaceKey: requestedSurfaceKey });
+  }
+  const existing = existingRows[0] || null;
+  const id = existing?.id || surfaceId || body.id || randomUUID();
+  const surfaceKey = customizationKey(body.surfaceKey || body.key || existing?.surfaceKey || body.name || 'front', 'front');
+  const imageBody = body.imageDataBase64 ? body : null;
+  const baseImageUrl = imageBody
+    ? await saveCustomizationImageUpload(id, imageBody)
+    : normalizeStoredMediaUrl(body.baseImageUrl ?? body.imageUrl ?? existing?.baseImageUrl ?? '') || null;
+  await query(`
+    INSERT INTO product_customization_surfaces (id, template_id, name, surface_key, base_image_url, width_px, height_px, sort_order)
+    VALUES (:id, :templateId, :name, :surfaceKey, :baseImageUrl, :widthPx, :heightPx, :sortOrder)
+    ON DUPLICATE KEY UPDATE
+      name = VALUES(name),
+      surface_key = VALUES(surface_key),
+      base_image_url = VALUES(base_image_url),
+      width_px = VALUES(width_px),
+      height_px = VALUES(height_px),
+      sort_order = VALUES(sort_order)
+  `, {
+    id,
+    templateId,
+    name: String(body.name || existing?.name || 'Front').trim(),
+    surfaceKey,
+    baseImageUrl,
+    widthPx: intOrNull(body.widthPx ?? existing?.widthPx),
+    heightPx: intOrNull(body.heightPx ?? existing?.heightPx),
+    sortOrder: nonNegativeInt(body.sortOrder ?? existing?.sortOrder, 0)
+  });
+  return customizationTemplateById(templateId);
+}
+
+async function updateCustomizationSurface(surfaceId, body = {}) {
+  const rows = await query('SELECT template_id AS templateId FROM product_customization_surfaces WHERE id = :surfaceId LIMIT 1', { surfaceId });
+  if (!rows[0]) {
+    const error = new Error('Customization surface not found');
+    error.statusCode = 404;
+    throw error;
+  }
+  return saveCustomizationSurface(rows[0].templateId, body, surfaceId);
+}
+
+async function updateCustomizationSurfaceImage(surfaceId, body = {}) {
+  const rows = await query('SELECT template_id AS templateId FROM product_customization_surfaces WHERE id = :surfaceId LIMIT 1', { surfaceId });
+  if (!rows[0]) {
+    const error = new Error('Customization surface not found');
+    error.statusCode = 404;
+    throw error;
+  }
+  const url = await saveListingImageUpload(surfaceId, body);
+  if (!url) {
+    const error = new Error('Choose a base product image or provide an image URL');
+    error.statusCode = 400;
+    throw error;
+  }
+  await query('UPDATE product_customization_surfaces SET base_image_url = :url WHERE id = :surfaceId', { surfaceId, url });
+  return customizationTemplateById(rows[0].templateId);
+}
+
+async function deleteCustomizationSurface(surfaceId) {
+  const rows = await query('SELECT template_id AS templateId FROM product_customization_surfaces WHERE id = :surfaceId LIMIT 1', { surfaceId });
+  if (!rows[0]) {
+    const error = new Error('Customization surface not found');
+    error.statusCode = 404;
+    throw error;
+  }
+  await query('DELETE FROM product_customization_surfaces WHERE id = :surfaceId', { surfaceId });
+  return customizationTemplateById(rows[0].templateId);
+}
+
+async function saveCustomizationField(templateId, body = {}, fieldId = null) {
+  const template = await customizationTemplateById(templateId);
+  if (!template) {
+    const error = new Error('Customization template not found');
+    error.statusCode = 404;
+    throw error;
+  }
+  const label = String(body.label || 'Custom field').trim();
+  const requestedFieldKey = customizationKey(body.fieldKey || body.key || label, 'field');
+  let existingRows = fieldId ? await query(`
+    SELECT id, template_id AS templateId, field_key AS fieldKey, label, field_type AS fieldType, placeholder, help_text AS helpText, is_required AS isRequired, default_value AS defaultValue, min_length AS minLength, max_length AS maxLength, min_value AS minValue, max_value AS \`maxValue\`, price_delta_jmd AS priceDeltaJmd, status, sort_order AS sortOrder
+    FROM product_customization_fields
+    WHERE id = :fieldId AND template_id = :templateId
+    LIMIT 1
+  `, { fieldId, templateId }) : [];
+  if (!existingRows[0] && requestedFieldKey) {
+    existingRows = await query(`
+      SELECT id, template_id AS templateId, field_key AS fieldKey, label, field_type AS fieldType, placeholder, help_text AS helpText, is_required AS isRequired, default_value AS defaultValue, min_length AS minLength, max_length AS maxLength, min_value AS minValue, max_value AS \`maxValue\`, price_delta_jmd AS priceDeltaJmd, status, sort_order AS sortOrder
+      FROM product_customization_fields
+      WHERE template_id = :templateId AND field_key = :fieldKey
+      LIMIT 1
+    `, { templateId, fieldKey: requestedFieldKey });
+  }
+  const existing = existingRows[0] || null;
+  const id = existing?.id || fieldId || body.id || randomUUID();
+  const fieldType = CUSTOMIZATION_FIELD_TYPES.has(String(body.fieldType || existing?.fieldType || '').toLowerCase())
+    ? String(body.fieldType || existing?.fieldType).toLowerCase()
+    : 'text';
+  const savedLabel = String(body.label || existing?.label || 'Custom field').trim();
+  const fieldKey = customizationKey(body.fieldKey || body.key || existing?.fieldKey || savedLabel, 'field');
+  await query(`
+    INSERT INTO product_customization_fields (id, template_id, field_key, label, field_type, placeholder, help_text, is_required, default_value, min_length, max_length, min_value, max_value, price_delta_jmd, status, sort_order)
+    VALUES (:id, :templateId, :fieldKey, :label, :fieldType, :placeholder, :helpText, :isRequired, :defaultValue, :minLength, :maxLength, :minValue, :maxValue, :priceDeltaJmd, :status, :sortOrder)
+    ON DUPLICATE KEY UPDATE
+      field_key = VALUES(field_key),
+      label = VALUES(label),
+      field_type = VALUES(field_type),
+      placeholder = VALUES(placeholder),
+      help_text = VALUES(help_text),
+      is_required = VALUES(is_required),
+      default_value = VALUES(default_value),
+      min_length = VALUES(min_length),
+      max_length = VALUES(max_length),
+      min_value = VALUES(min_value),
+      max_value = VALUES(max_value),
+      price_delta_jmd = VALUES(price_delta_jmd),
+      status = VALUES(status),
+      sort_order = VALUES(sort_order)
+  `, {
+    id,
+    templateId,
+    fieldKey,
+    label: savedLabel || existing?.label || 'Custom field',
+    fieldType,
+    placeholder: body.placeholder ?? existing?.placeholder ?? null,
+    helpText: body.helpText ?? existing?.helpText ?? null,
+    isRequired: body.isRequired === undefined ? Boolean(existing?.isRequired) : Boolean(body.isRequired),
+    defaultValue: body.defaultValue ?? existing?.defaultValue ?? null,
+    minLength: intOrNull(body.minLength ?? existing?.minLength),
+    maxLength: intOrNull(body.maxLength ?? existing?.maxLength),
+    minValue: numberOrNull(body.minValue ?? existing?.minValue),
+    maxValue: numberOrNull(body.maxValue ?? existing?.maxValue),
+    priceDeltaJmd: nonNegativeInt(body.priceDeltaJmd ?? existing?.priceDeltaJmd, 0),
+    status: customizationStatus(body.status, CUSTOMIZATION_FIELD_STATUSES, existing?.status || 'active'),
+    sortOrder: nonNegativeInt(body.sortOrder ?? existing?.sortOrder, 0)
+  });
+
+  const savedFieldId = existing?.id || id;
+  if (Array.isArray(body.options)) {
+    await query('DELETE FROM product_customization_field_options WHERE field_id = :fieldId', { fieldId: savedFieldId });
+    for (const option of body.options) {
+      await saveCustomizationFieldOption(savedFieldId, option, option.id || null);
+    }
+  }
+  if (Array.isArray(body.placements)) {
+    const placementIds = body.placements.map((placement) => placement.id).filter(Boolean);
+    if (placementIds.length) {
+      await query(`
+        DELETE FROM product_customization_placements
+        WHERE field_id = :fieldId AND NOT FIND_IN_SET(id, :placementIds)
+      `, { fieldId: savedFieldId, placementIds: placementIds.join(',') });
+    } else {
+      await query('DELETE FROM product_customization_placements WHERE field_id = :fieldId', { fieldId: savedFieldId });
+    }
+    for (const placement of body.placements) {
+      await saveCustomizationPlacement(savedFieldId, placement, placement.id || null);
+    }
+  }
+  return customizationTemplateById(templateId);
+}
+
+async function updateCustomizationField(fieldId, body = {}) {
+  const rows = await query('SELECT template_id AS templateId FROM product_customization_fields WHERE id = :fieldId LIMIT 1', { fieldId });
+  if (!rows[0]) {
+    const error = new Error('Customization field not found');
+    error.statusCode = 404;
+    throw error;
+  }
+  return saveCustomizationField(rows[0].templateId, body, fieldId);
+}
+
+async function deleteCustomizationField(fieldId) {
+  const rows = await query('SELECT template_id AS templateId FROM product_customization_fields WHERE id = :fieldId LIMIT 1', { fieldId });
+  if (!rows[0]) {
+    const error = new Error('Customization field not found');
+    error.statusCode = 404;
+    throw error;
+  }
+  await query('DELETE FROM product_customization_fields WHERE id = :fieldId', { fieldId });
+  return customizationTemplateById(rows[0].templateId);
+}
+
+async function saveCustomizationFieldOption(fieldId, body = {}, optionId = null) {
+  const fieldRows = await query('SELECT id, template_id AS templateId FROM product_customization_fields WHERE id = :fieldId LIMIT 1', { fieldId });
+  if (!fieldRows[0]) {
+    const error = new Error('Customization field not found');
+    error.statusCode = 404;
+    throw error;
+  }
+  const existingRows = optionId ? await query(`
+    SELECT id, field_id AS fieldId, option_value AS optionValue, label, swatch_color AS swatchColor, price_delta_jmd AS priceDeltaJmd, sort_order AS sortOrder, status
+    FROM product_customization_field_options
+    WHERE id = :optionId AND field_id = :fieldId
+    LIMIT 1
+  `, { optionId, fieldId }) : [];
+  const existing = existingRows[0] || null;
+  const id = existing?.id || optionId || body.id || randomUUID();
+  const label = String(body.label || existing?.label || body.optionValue || body.value || 'Option').trim();
+  await query(`
+    INSERT INTO product_customization_field_options (id, field_id, option_value, label, swatch_color, price_delta_jmd, sort_order, status)
+    VALUES (:id, :fieldId, :optionValue, :label, :swatchColor, :priceDeltaJmd, :sortOrder, :status)
+    ON DUPLICATE KEY UPDATE
+      label = VALUES(label),
+      swatch_color = VALUES(swatch_color),
+      price_delta_jmd = VALUES(price_delta_jmd),
+      sort_order = VALUES(sort_order),
+      status = VALUES(status)
+  `, {
+    id,
+    fieldId,
+    optionValue: customizationKey(body.optionValue || body.value || existing?.optionValue || label, 'option'),
+    label,
+    swatchColor: body.swatchColor ?? existing?.swatchColor ?? null,
+    priceDeltaJmd: nonNegativeInt(body.priceDeltaJmd ?? existing?.priceDeltaJmd, 0),
+    sortOrder: nonNegativeInt(body.sortOrder ?? existing?.sortOrder, 0),
+    status: customizationStatus(body.status, CUSTOMIZATION_FIELD_STATUSES, existing?.status || 'active')
+  });
+  return customizationTemplateById(fieldRows[0].templateId);
+}
+
+async function updateCustomizationFieldOption(optionId, body = {}) {
+  const rows = await query('SELECT field_id AS fieldId FROM product_customization_field_options WHERE id = :optionId LIMIT 1', { optionId });
+  if (!rows[0]) {
+    const error = new Error('Customization option not found');
+    error.statusCode = 404;
+    throw error;
+  }
+  return saveCustomizationFieldOption(rows[0].fieldId, body, optionId);
+}
+
+async function deleteCustomizationFieldOption(optionId) {
+  const rows = await query(`
+    SELECT f.template_id AS templateId
+    FROM product_customization_field_options o
+    JOIN product_customization_fields f ON f.id = o.field_id
+    WHERE o.id = :optionId
+    LIMIT 1
+  `, { optionId });
+  if (!rows[0]) {
+    const error = new Error('Customization option not found');
+    error.statusCode = 404;
+    throw error;
+  }
+  await query('DELETE FROM product_customization_field_options WHERE id = :optionId', { optionId });
+  return customizationTemplateById(rows[0].templateId);
+}
+
+async function saveCustomizationPlacement(fieldId, body = {}, placementId = null) {
+  const fieldRows = await query('SELECT id, template_id AS templateId FROM product_customization_fields WHERE id = :fieldId LIMIT 1', { fieldId });
+  if (!fieldRows[0]) {
+    const error = new Error('Customization field not found');
+    error.statusCode = 404;
+    throw error;
+  }
+  const surfaceId = body.surfaceId;
+  if (!surfaceId) {
+    const error = new Error('Customization placement requires a surfaceId');
+    error.statusCode = 400;
+    throw error;
+  }
+  const surfaceRows = await query('SELECT id FROM product_customization_surfaces WHERE id = :surfaceId AND template_id = :templateId LIMIT 1', {
+    surfaceId,
+    templateId: fieldRows[0].templateId
+  });
+  if (!surfaceRows[0]) {
+    const error = new Error('Placement surface must belong to the same customization template');
+    error.statusCode = 400;
+    throw error;
+  }
+  let existingRows = placementId ? await query(`
+    SELECT id, field_id AS fieldId, surface_id AS surfaceId, x_percent AS xPercent, y_percent AS yPercent, width_percent AS widthPercent, height_percent AS heightPercent, rotation_degrees AS rotationDegrees, font_family AS fontFamily, font_size_percent AS fontSizePercent, font_weight AS fontWeight, text_align AS textAlign, text_color AS textColor, background_color AS backgroundColor, z_index AS zIndex
+    FROM product_customization_placements
+    WHERE id = :placementId AND field_id = :fieldId
+    LIMIT 1
+  `, { placementId, fieldId }) : [];
+  if (!existingRows[0]) {
+    existingRows = await query(`
+      SELECT id, field_id AS fieldId, surface_id AS surfaceId, x_percent AS xPercent, y_percent AS yPercent, width_percent AS widthPercent, height_percent AS heightPercent, rotation_degrees AS rotationDegrees, font_family AS fontFamily, font_size_percent AS fontSizePercent, font_weight AS fontWeight, text_align AS textAlign, text_color AS textColor, background_color AS backgroundColor, z_index AS zIndex
+      FROM product_customization_placements
+      WHERE field_id = :fieldId AND surface_id = :surfaceId
+      LIMIT 1
+    `, { fieldId, surfaceId });
+  }
+  const existing = existingRows[0] || null;
+  const id = existing?.id || placementId || body.id || randomUUID();
+  await query(`
+    INSERT INTO product_customization_placements (id, field_id, surface_id, x_percent, y_percent, width_percent, height_percent, rotation_degrees, font_family, font_size_percent, font_weight, text_align, text_color, background_color, z_index)
+    VALUES (:id, :fieldId, :surfaceId, :xPercent, :yPercent, :widthPercent, :heightPercent, :rotationDegrees, :fontFamily, :fontSizePercent, :fontWeight, :textAlign, :textColor, :backgroundColor, :zIndex)
+    ON DUPLICATE KEY UPDATE
+      x_percent = VALUES(x_percent),
+      y_percent = VALUES(y_percent),
+      width_percent = VALUES(width_percent),
+      height_percent = VALUES(height_percent),
+      rotation_degrees = VALUES(rotation_degrees),
+      font_family = VALUES(font_family),
+      font_size_percent = VALUES(font_size_percent),
+      font_weight = VALUES(font_weight),
+      text_align = VALUES(text_align),
+      text_color = VALUES(text_color),
+      background_color = VALUES(background_color),
+      z_index = VALUES(z_index)
+  `, {
+    id,
+    fieldId,
+    surfaceId,
+    xPercent: numberOrNull(body.xPercent ?? existing?.xPercent) ?? 50,
+    yPercent: numberOrNull(body.yPercent ?? existing?.yPercent) ?? 50,
+    widthPercent: numberOrNull(body.widthPercent ?? existing?.widthPercent) ?? 30,
+    heightPercent: numberOrNull(body.heightPercent ?? existing?.heightPercent) ?? 10,
+    rotationDegrees: numberOrNull(body.rotationDegrees ?? existing?.rotationDegrees) ?? 0,
+    fontFamily: String(body.fontFamily ?? existing?.fontFamily ?? '').replace(/[;"<>]/g, '').slice(0, 120) || null,
+    fontSizePercent: numberOrNull(body.fontSizePercent ?? existing?.fontSizePercent),
+    fontWeight: body.fontWeight ?? existing?.fontWeight ?? null,
+    textAlign: CUSTOMIZATION_TEXT_ALIGNMENTS.has(body.textAlign) ? body.textAlign : existing?.textAlign || 'center',
+    textColor: body.textColor ?? existing?.textColor ?? null,
+    backgroundColor: body.backgroundColor ?? existing?.backgroundColor ?? null,
+    zIndex: Math.floor(Number(body.zIndex ?? existing?.zIndex ?? 1)) || 1
+  });
+  return customizationTemplateById(fieldRows[0].templateId);
+}
+
+async function updateCustomizationPlacement(placementId, body = {}) {
+  const rows = await query('SELECT field_id AS fieldId, surface_id AS surfaceId FROM product_customization_placements WHERE id = :placementId LIMIT 1', { placementId });
+  if (!rows[0]) {
+    const error = new Error('Customization placement not found');
+    error.statusCode = 404;
+    throw error;
+  }
+  return saveCustomizationPlacement(rows[0].fieldId, { ...body, surfaceId: body.surfaceId || rows[0].surfaceId }, placementId);
+}
+
+async function deleteCustomizationPlacement(placementId) {
+  const rows = await query(`
+    SELECT f.template_id AS templateId
+    FROM product_customization_placements p
+    JOIN product_customization_fields f ON f.id = p.field_id
+    WHERE p.id = :placementId
+    LIMIT 1
+  `, { placementId });
+  if (!rows[0]) {
+    const error = new Error('Customization placement not found');
+    error.statusCode = 404;
+    throw error;
+  }
+  await query('DELETE FROM product_customization_placements WHERE id = :placementId', { placementId });
+  return customizationTemplateById(rows[0].templateId);
 }
 
 async function listSubscriptionPlans() {
@@ -869,12 +1922,14 @@ async function listFoods() {
       p.price_jmd AS price,
       p.description,
       p.delivery_day AS deliveryDay,
-      product_image.imageUrl
+      product_image.imageUrl,
+      customization_image.imageUrl AS customizationImageUrl
     FROM products p
     JOIN vendors v ON v.id = p.vendor_id
     ${publicVendorSubscriptionJoin()}
     JOIN stores st ON st.id = p.store_id AND st.status NOT IN ('paused', 'suspended')
     ${primaryProductImageJoin()}
+    ${primaryProductCustomizationImageJoin()}
     WHERE p.type = 'food'
       AND p.status = 'published'
       AND v.status = 'active'
@@ -891,7 +1946,8 @@ async function listFoods() {
       originalPrice,
       price,
       hasDiscount: price < originalPrice,
-      discount: normalizeDiscount(discount)
+      discount: normalizeDiscount(discount),
+      imageUrl: row.imageUrl || row.customizationImageUrl || ''
     };
   }));
 }
@@ -1242,9 +2298,481 @@ async function activeCartForUser(customerUserId) {
   return rows[0];
 }
 
+function isEmptyCustomizationValue(value) {
+  if (value === undefined || value === null) return true;
+  if (typeof value === 'string') return value.trim() === '';
+  return false;
+}
+
+function hasCustomerImageValue(value) {
+  if (value === undefined || value === null) return false;
+  if (typeof value === 'string') return value.trim() !== '';
+  if (typeof value !== 'object') return false;
+  return Boolean(value.imageDataBase64 || value.url || value.imageUrl);
+}
+
+function sanitizedImageValueJson(value, field, url = '') {
+  const source = value && typeof value === 'object' ? value : {};
+  const imageName = String(source.imageName || source.name || source.label || field.label || 'custom image').trim();
+  const normalizedUrl = url || source.url || source.imageUrl || '';
+  return {
+    url: normalizedUrl,
+    imageUrl: normalizedUrl,
+    imageName,
+    imageMimeType: source.imageMimeType || source.mimeType || null,
+    imageSizeBytes: Number(source.imageSizeBytes || source.sizeBytes || 0) || null,
+    reviewStatus: source.reviewStatus || 'pending_vendor_review',
+    uploadedAt: source.uploadedAt || new Date().toISOString()
+  };
+}
+
+function isAllowedCustomizationImageUrl(value) {
+  const url = String(value || '').trim();
+  if (!url) return false;
+  return url.startsWith('uploads/customization-media/')
+    || url.startsWith('/api/uploads/customization-media/');
+}
+
+function normalizeCustomizationImageUrl(value) {
+  return normalizeStoredMediaUrl(value);
+}
+
+async function saveCustomerCustomizationImage(productId, field, value) {
+  if (!hasCustomerImageValue(value)) return null;
+  if (typeof value === 'string') {
+    const url = normalizeCustomizationImageUrl(value);
+    if (!isAllowedCustomizationImageUrl(url)) {
+      const error = new Error(`${field.label} must be uploaded as an image file`);
+      error.statusCode = 400;
+      throw error;
+    }
+    return sanitizedImageValueJson({ imageName: path.basename(url), url }, field, url);
+  }
+
+  const existingUrl = normalizeCustomizationImageUrl(value.url || value.imageUrl || '');
+  if (!value.imageDataBase64) {
+    if (existingUrl && !isAllowedCustomizationImageUrl(existingUrl)) {
+      const error = new Error(`${field.label} must be uploaded as an image file`);
+      error.statusCode = 400;
+      throw error;
+    }
+    return existingUrl ? sanitizedImageValueJson(value, field, existingUrl) : null;
+  }
+
+  const uploadId = cleanFileName(`custom-${productId}-${field.fieldKey}-${randomUUID()}`, `custom-${randomUUID()}`);
+  const url = await saveCustomizationImageUpload(uploadId, value);
+  return sanitizedImageValueJson(value, field, url);
+}
+
+function stripCustomerImageData(value) {
+  if (!value || typeof value !== 'object') return value;
+  const {
+    imageDataBase64,
+    previewUrl,
+    localPreviewUrl,
+    ...rest
+  } = value;
+  return rest;
+}
+
+function customizationPreviewsWithUploadedImages(previews, customizations) {
+  const imageByFieldKey = new Map(
+    (customizations || [])
+      .filter((item) => item.fieldType === 'image' && item.valueJson?.url)
+      .map((item) => [item.fieldKey, item.valueJson])
+  );
+  if (!imageByFieldKey.size) {
+    return previews.map((preview) => {
+      const rawValues = preview.previewJson?.values && typeof preview.previewJson.values === 'object'
+        ? preview.previewJson.values
+        : {};
+      const previewJson = preview.previewJson && typeof preview.previewJson === 'object'
+        ? {
+            ...preview.previewJson,
+            values: Object.fromEntries(Object.entries(rawValues).map(([key, value]) => [key, stripCustomerImageData(value)]))
+          }
+        : preview.previewJson;
+      return { ...preview, previewJson };
+    });
+  }
+
+  return previews.map((preview) => {
+    const previewJson = preview.previewJson && typeof preview.previewJson === 'object'
+      ? { ...preview.previewJson }
+      : preview.previewJson;
+    if (!previewJson || typeof previewJson !== 'object') return preview;
+
+    const values = previewJson.values && typeof previewJson.values === 'object'
+      ? { ...previewJson.values }
+      : {};
+    for (const [fieldKey, image] of imageByFieldKey.entries()) {
+      values[fieldKey] = stripCustomerImageData(image);
+    }
+
+    const fields = Array.isArray(previewJson.fields)
+      ? previewJson.fields.map((field) => {
+          const image = imageByFieldKey.get(field?.fieldKey);
+          return image
+            ? {
+                ...field,
+                fieldType: 'image',
+                value: image.imageName || 'Uploaded image',
+                imageUrl: image.url,
+                reviewStatus: image.reviewStatus || 'pending_vendor_review'
+              }
+            : field;
+        })
+      : previewJson.fields;
+
+    return {
+      ...preview,
+      previewJson: {
+        ...previewJson,
+        values,
+        fields
+      }
+    };
+  });
+}
+
+async function recordCustomizationAudit(entry, executor = query) {
+  try {
+    const run = typeof executor === 'function'
+      ? executor
+      : executor && typeof executor.query === 'function'
+        ? executor.query.bind(executor)
+        : query;
+    await run(`
+      INSERT INTO customization_audit_logs (id, order_id, order_item_id, product_id, vendor_id, actor_user_id, actor_role, action, details)
+      VALUES (:id, :orderId, :orderItemId, :productId, :vendorId, :actorUserId, :actorRole, :action, :details)
+    `, {
+      id: randomUUID(),
+      orderId: entry.orderId || null,
+      orderItemId: entry.orderItemId || null,
+      productId: entry.productId || null,
+      vendorId: entry.vendorId || null,
+      actorUserId: entry.actorUserId || null,
+      actorRole: entry.actorRole || null,
+      action: entry.action,
+      details: entry.details === undefined ? null : JSON.stringify(entry.details)
+    });
+  } catch (error) {
+    console.warn('Customization audit logging failed', error.message);
+  }
+}
+
+function normalizeStoredCustomization(row) {
+  return {
+    id: row.id || null,
+    cartId: row.cartId || null,
+    productId: row.productId || null,
+    customizationSignature: row.customizationSignature || '',
+    orderItemId: row.orderItemId || null,
+    fieldId: row.fieldId || null,
+    fieldKey: row.fieldKey,
+    fieldLabel: row.fieldLabel,
+    label: row.fieldLabel,
+    fieldType: row.fieldType,
+    valueText: row.valueText || '',
+    valueJson: safeParseJson(row.valueJson, null),
+    priceDeltaJmd: Number(row.priceDeltaJmd || 0),
+    createdAt: row.createdAt || null,
+    updatedAt: row.updatedAt || null
+  };
+}
+
+function customizationSummaryLine(customization) {
+  const label = customization.fieldLabel || customization.label || customization.fieldKey || 'Custom option';
+  const value = customization.valueText || '';
+  const priceDelta = Number(customization.priceDeltaJmd || 0);
+  const suffix = priceDelta > 0 ? ` (+JMD ${priceDelta.toLocaleString()})` : '';
+  return `${label}: ${value}${suffix}`;
+}
+
+function normalizeStoredPreview(row) {
+  return {
+    id: row.id || null,
+    cartId: row.cartId || null,
+    productId: row.productId || null,
+    customizationSignature: row.customizationSignature || '',
+    orderItemId: row.orderItemId || null,
+    surfaceKey: row.surfaceKey,
+    previewImageUrl: row.previewImageUrl || null,
+    previewJson: safeParseJson(row.previewJson, null),
+    createdAt: row.createdAt || null,
+    updatedAt: row.updatedAt || null
+  };
+}
+
+async function validateProductCustomization(productId, body = {}) {
+  const productRows = await query(`
+    SELECT p.id
+    FROM products p
+    JOIN vendors v ON v.id = p.vendor_id
+    ${publicVendorSubscriptionJoin()}
+    JOIN stores st ON st.id = p.store_id AND st.status NOT IN ('paused', 'suspended')
+    WHERE p.id = :productId
+      AND p.status = 'published'
+      AND v.status = 'active'
+      AND v.registration_status = 'registered'
+    LIMIT 1
+  `, { productId });
+  if (!productRows[0]) {
+    const error = new Error('Product is not available for customization');
+    error.statusCode = 404;
+    throw error;
+  }
+  const template = await customizationTemplateByProductId(productId, { publicOnly: true });
+  const values = customizationValuesMap(body);
+  const previews = normalizeCustomizationPreviews(body);
+  if (!template) {
+    if (values.size || previews.length) {
+      const error = new Error('This product is not set up for customization');
+      error.statusCode = 400;
+      throw error;
+    }
+    return {
+      productId,
+      isCustomizable: false,
+      templateId: null,
+      customizations: [],
+      previews: [],
+      customizationSignature: '',
+      addOnTotalJmd: 0
+    };
+  }
+
+  const customizations = [];
+  for (const field of template.fields.filter((item) => item.status === 'active')) {
+    const record = values.get(field.id) || values.get(field.fieldKey);
+    let value = customizationValueFromRecord(record);
+    if (isEmptyCustomizationValue(value) && !isEmptyCustomizationValue(field.defaultValue)) {
+      value = field.defaultValue;
+    }
+
+    if (isEmptyCustomizationValue(value)) {
+      if (field.isRequired) {
+        const error = new Error(`${field.label} is required`);
+        error.statusCode = 400;
+        throw error;
+      }
+      continue;
+    }
+
+    let valueText = customizationValueText(value);
+    let valueJson = null;
+    let priceDeltaJmd = Number(field.priceDeltaJmd || 0);
+
+    if (field.fieldType === 'text') {
+      valueText = valueText.trim();
+      if (field.minLength !== null && valueText.length < field.minLength) {
+        const error = new Error(`${field.label} must be at least ${field.minLength} characters`);
+        error.statusCode = 400;
+        throw error;
+      }
+      if (field.maxLength !== null && valueText.length > field.maxLength) {
+        const error = new Error(`${field.label} must be ${field.maxLength} characters or fewer`);
+        error.statusCode = 400;
+        throw error;
+      }
+      const maxLength = field.maxLength === null ? 120 : field.maxLength;
+      if (valueText.length > maxLength) {
+        const error = new Error(`${field.label} must be ${maxLength} characters or fewer`);
+        error.statusCode = 400;
+        throw error;
+      }
+    } else if (field.fieldType === 'number') {
+      const number = Number(valueText);
+      if (!Number.isFinite(number)) {
+        const error = new Error(`${field.label} must be a number`);
+        error.statusCode = 400;
+        throw error;
+      }
+      if (field.minValue !== null && number < field.minValue) {
+        const error = new Error(`${field.label} must be at least ${field.minValue}`);
+        error.statusCode = 400;
+        throw error;
+      }
+      if (field.maxValue !== null && number > field.maxValue) {
+        const error = new Error(`${field.label} must be no more than ${field.maxValue}`);
+        error.statusCode = 400;
+        throw error;
+      }
+      valueText = String(number);
+      valueJson = { value: number };
+    } else if (field.fieldType === 'color') {
+      valueText = valueText.trim();
+      if (!/^#[0-9a-f]{6}$/i.test(valueText)) {
+        const error = new Error(`${field.label} must be a valid color`);
+        error.statusCode = 400;
+        throw error;
+      }
+      if (valueText.length > 32) {
+        const error = new Error(`${field.label} color value is too long`);
+        error.statusCode = 400;
+        throw error;
+      }
+    } else if (field.fieldType === 'select') {
+      const selectedValue = customizationKey(
+        typeof value === 'object' ? value.optionValue || value.value || value.label : value,
+        'option'
+      );
+      const option = field.options.find((item) => item.status === 'active' && item.optionValue === selectedValue);
+      if (!option) {
+        const error = new Error(`${field.label} must use one of the available options`);
+        error.statusCode = 400;
+        throw error;
+      }
+      valueText = option.label;
+      valueJson = { optionValue: option.optionValue, label: option.label, swatchColor: option.swatchColor || null };
+      priceDeltaJmd += Number(option.priceDeltaJmd || 0);
+    } else if (field.fieldType === 'checkbox') {
+      const checked = value === true || value === 'true' || value === '1' || value === 1 || value === 'yes';
+      if (field.isRequired && !checked) {
+        const error = new Error(`${field.label} must be selected`);
+        error.statusCode = 400;
+        throw error;
+      }
+      valueText = checked ? 'Yes' : 'No';
+      valueJson = { checked };
+      if (!checked) {
+        priceDeltaJmd = 0;
+      }
+    } else if (field.fieldType === 'image') {
+      const imageValue = await saveCustomerCustomizationImage(productId, field, value);
+      if (!imageValue) {
+        if (field.isRequired) {
+          const error = new Error(`${field.label} image is required`);
+          error.statusCode = 400;
+          throw error;
+        }
+        continue;
+      }
+      valueText = imageValue.imageName || imageValue.url || 'Uploaded image';
+      valueJson = imageValue;
+    }
+
+    customizations.push({
+      fieldId: field.id,
+      fieldKey: field.fieldKey,
+      fieldLabel: field.label,
+      fieldType: field.fieldType,
+      valueText,
+      valueJson,
+      priceDeltaJmd
+    });
+  }
+
+  const normalizedPreviews = customizationPreviewsWithUploadedImages(previews, customizations);
+  const signature = customizationSignature(customizations, normalizedPreviews);
+  return {
+    productId,
+    isCustomizable: true,
+    templateId: template.id,
+    customizations,
+    previews: normalizedPreviews,
+    customizationSignature: signature,
+    addOnTotalJmd: customizations.reduce((sum, item) => sum + Number(item.priceDeltaJmd || 0), 0)
+  };
+}
+
+async function saveCartItemCustomizationRows(cartId, productId, customizationSignatureValue, validation) {
+  await query(`
+    DELETE FROM cart_item_customizations
+    WHERE cart_id = :cartId AND product_id = :productId AND customization_signature = :customizationSignature
+  `, { cartId, productId, customizationSignature: customizationSignatureValue });
+  await query(`
+    DELETE FROM cart_item_customization_previews
+    WHERE cart_id = :cartId AND product_id = :productId AND customization_signature = :customizationSignature
+  `, { cartId, productId, customizationSignature: customizationSignatureValue });
+
+  for (const item of validation.customizations || []) {
+    await query(`
+      INSERT INTO cart_item_customizations (id, cart_id, product_id, customization_signature, field_id, field_key, field_label, field_type, value_text, value_json, price_delta_jmd)
+      VALUES (:id, :cartId, :productId, :customizationSignature, :fieldId, :fieldKey, :fieldLabel, :fieldType, :valueText, :valueJson, :priceDeltaJmd)
+    `, {
+      id: randomUUID(),
+      cartId,
+      productId,
+      customizationSignature: customizationSignatureValue,
+      fieldId: item.fieldId || null,
+      fieldKey: item.fieldKey,
+      fieldLabel: item.fieldLabel,
+      fieldType: item.fieldType,
+      valueText: item.valueText || null,
+      valueJson: item.valueJson === undefined || item.valueJson === null ? null : JSON.stringify(item.valueJson),
+      priceDeltaJmd: nonNegativeInt(item.priceDeltaJmd, 0)
+    });
+  }
+
+  for (const preview of validation.previews || []) {
+    await query(`
+      INSERT INTO cart_item_customization_previews (id, cart_id, product_id, customization_signature, surface_key, preview_image_url, preview_json)
+      VALUES (:id, :cartId, :productId, :customizationSignature, :surfaceKey, :previewImageUrl, :previewJson)
+    `, {
+      id: randomUUID(),
+      cartId,
+      productId,
+      customizationSignature: customizationSignatureValue,
+      surfaceKey: preview.surfaceKey,
+      previewImageUrl: preview.previewImageUrl || null,
+      previewJson: preview.previewJson === undefined || preview.previewJson === null ? null : JSON.stringify(preview.previewJson)
+    });
+  }
+}
+
+async function listCustomizationUploads() {
+  const rows = await query(`
+    SELECT
+      'order' AS sourceType,
+      oic.id,
+      oi.order_id AS orderId,
+      NULL AS cartId,
+      oi.product_id AS productId,
+      oi.item_name AS productName,
+      oi.vendor_id AS vendorId,
+      v.business_name AS vendorName,
+      oic.field_key AS fieldKey,
+      oic.field_label AS fieldLabel,
+      oic.value_text AS valueText,
+      oic.value_json AS valueJson,
+      oic.created_at AS createdAt
+    FROM order_item_customizations oic
+    JOIN order_items oi ON oi.id = oic.order_item_id
+    JOIN vendors v ON v.id = oi.vendor_id
+    WHERE oic.field_type = 'image'
+    UNION ALL
+    SELECT
+      'cart' AS sourceType,
+      cic.id,
+      NULL AS orderId,
+      cic.cart_id AS cartId,
+      cic.product_id AS productId,
+      p.name AS productName,
+      ci.vendor_id AS vendorId,
+      v.business_name AS vendorName,
+      cic.field_key AS fieldKey,
+      cic.field_label AS fieldLabel,
+      cic.value_text AS valueText,
+      cic.value_json AS valueJson,
+      cic.created_at AS createdAt
+    FROM cart_item_customizations cic
+    JOIN cart_items ci ON ci.cart_id = cic.cart_id AND ci.product_id = cic.product_id AND ci.customization_signature = cic.customization_signature
+    JOIN products p ON p.id = cic.product_id
+    JOIN vendors v ON v.id = ci.vendor_id
+    WHERE cic.field_type = 'image'
+    ORDER BY createdAt DESC
+  `);
+  return rows.map((row) => ({
+    ...row,
+    valueJson: safeParseJson(row.valueJson, null)
+  }));
+}
+
 async function cartItemsForCart(cartId) {
   const rows = await query(`
     SELECT
+      ci.id AS cartItemId,
       ci.cart_id AS cartId,
       c.customer_user_id AS customerUserId,
       ci.product_id AS productId,
@@ -1256,7 +2784,8 @@ async function cartItemsForCart(cartId) {
       ci.unit_price_jmd AS price,
       p.stock_quantity AS stockQuantity,
       p.delivery_day AS deliveryDay,
-      ci.quantity AS qty
+      ci.quantity AS qty,
+      ci.customization_signature AS customizationSignature
     FROM cart_items ci
     JOIN carts c ON c.id = ci.cart_id
     JOIN products p ON p.id = ci.product_id
@@ -1269,21 +2798,59 @@ async function cartItemsForCart(cartId) {
       AND v.registration_status = 'registered'
     ORDER BY ci.created_at
   `, { cartId });
+  const [customizationRows, previewRows] = rows.length ? await Promise.all([
+    query(`
+      SELECT id, product_id AS productId, customization_signature AS customizationSignature, field_id AS fieldId, field_key AS fieldKey, field_label AS fieldLabel, field_type AS fieldType, value_text AS valueText, value_json AS valueJson, price_delta_jmd AS priceDeltaJmd, created_at AS createdAt, updated_at AS updatedAt
+      FROM cart_item_customizations
+      WHERE cart_id = :cartId
+      ORDER BY created_at
+    `, { cartId }),
+    query(`
+      SELECT id, product_id AS productId, customization_signature AS customizationSignature, surface_key AS surfaceKey, preview_image_url AS previewImageUrl, preview_json AS previewJson, created_at AS createdAt, updated_at AS updatedAt
+      FROM cart_item_customization_previews
+      WHERE cart_id = :cartId
+      ORDER BY created_at
+    `, { cartId })
+  ]) : [[], []];
+  const customizationsByItem = new Map();
+  for (const row of customizationRows) {
+    const key = `${row.productId}:${row.customizationSignature || ''}`;
+    const list = customizationsByItem.get(key) || [];
+    list.push(normalizeStoredCustomization(row));
+    customizationsByItem.set(key, list);
+  }
+  const previewsByItem = new Map();
+  for (const row of previewRows) {
+    const key = `${row.productId}:${row.customizationSignature || ''}`;
+    const list = previewsByItem.get(key) || [];
+    list.push(normalizeStoredPreview(row));
+    previewsByItem.set(key, list);
+  }
 
   return Promise.all(rows.map(async (item) => {
+    const customizationSignatureValue = item.customizationSignature || '';
+    const key = `${item.productId}:${customizationSignatureValue}`;
+    const customizations = customizationsByItem.get(key) || [];
+    const customizationPreviews = previewsByItem.get(key) || [];
     const originalPrice = Number(item.price || 0);
     const discount = await bestDiscountForProduct({
       id: item.productId,
       vendorId: item.vendorId,
       storeId: item.storeId
     }, item.customerUserId, originalPrice, query, item.cartId);
+    const customizationAddOnTotal = customizations.reduce((sum, customization) => sum + Number(customization.priceDeltaJmd || 0), 0);
     return {
       ...item,
-      originalPrice,
-      price: discountedUnitPrice(originalPrice, discount),
+      originalPrice: originalPrice + customizationAddOnTotal,
+      price: discountedUnitPrice(originalPrice, discount) + customizationAddOnTotal,
       discount: normalizeDiscount(discount),
       qty: Number(item.qty || 0),
-      stockQuantity: Number(item.stockQuantity || 0)
+      stockQuantity: Number(item.stockQuantity || 0),
+      customizationSignature: customizationSignatureValue,
+      customizations,
+      customizationPreviews,
+      customizationAddOnTotal,
+      customizationSummary: customizations.map(customizationSummaryLine)
     };
   }));
 }
@@ -1299,7 +2866,8 @@ async function cartForUser(customerUserId) {
   };
 }
 
-async function addCartItem(customerUserId, { productId, qty = 1 }) {
+async function addCartItem(customerUserId, body = {}) {
+  const { productId, qty = 1 } = body;
   const cart = await activeCartForUser(customerUserId);
   const rows = await query(`
     SELECT p.id, p.vendor_id AS vendorId, p.store_id AS storeId, p.price_jmd AS price, p.stock_quantity AS stockQuantity
@@ -1319,12 +2887,13 @@ async function addCartItem(customerUserId, { productId, qty = 1 }) {
     error.statusCode = 404;
     throw error;
   }
+  const validation = await validateProductCustomization(productId, body);
+  const customizationSignatureValue = validation.customizationSignature || '';
   const requestedQty = Math.max(1, Math.floor(Number(qty) || 1));
   const currentRows = await query(`
-    SELECT quantity
+    SELECT COALESCE(SUM(quantity), 0) AS quantity
     FROM cart_items
     WHERE cart_id = :cartId AND product_id = :productId
-    LIMIT 1
   `, { cartId: cart.id, productId });
   const currentQty = Number(currentRows[0]?.quantity || 0);
   if (Number(product.stockQuantity || 0) < currentQty + requestedQty) {
@@ -1333,8 +2902,8 @@ async function addCartItem(customerUserId, { productId, qty = 1 }) {
     throw error;
   }
   await query(`
-    INSERT INTO cart_items (cart_id, product_id, vendor_id, store_id, quantity, unit_price_jmd)
-    VALUES (:cartId, :productId, :vendorId, :storeId, :qty, :price)
+    INSERT INTO cart_items (cart_id, product_id, vendor_id, store_id, quantity, unit_price_jmd, customization_signature)
+    VALUES (:cartId, :productId, :vendorId, :storeId, :qty, :price, :customizationSignature)
     ON DUPLICATE KEY UPDATE quantity = quantity + VALUES(quantity), unit_price_jmd = VALUES(unit_price_jmd)
   `, {
     cartId: cart.id,
@@ -1342,14 +2911,17 @@ async function addCartItem(customerUserId, { productId, qty = 1 }) {
     vendorId: product.vendorId,
     storeId: product.storeId,
     qty: requestedQty,
-    price: Number(product.price || 0)
+    price: Number(product.price || 0),
+    customizationSignature: customizationSignatureValue
   });
+  await saveCartItemCustomizationRows(cart.id, productId, customizationSignatureValue, validation);
   return cartForUser(customerUserId);
 }
 
-async function updateCartItem(customerUserId, productId, qty) {
+async function updateCartItem(customerUserId, productId, qty, customizationSignatureValue = '') {
   const cart = await activeCartForUser(customerUserId);
   const quantity = Math.max(1, Math.floor(Number(qty) || 1));
+  const signature = String(customizationSignatureValue || '');
   const rows = await query(`
     SELECT p.stock_quantity AS stockQuantity
     FROM products p
@@ -1367,22 +2939,36 @@ async function updateCartItem(customerUserId, productId, qty) {
     error.statusCode = 404;
     throw error;
   }
-  if (Number(rows[0].stockQuantity || 0) < quantity) {
+  const otherRows = await query(`
+    SELECT COALESCE(SUM(quantity), 0) AS quantity
+    FROM cart_items
+    WHERE cart_id = :cartId AND product_id = :productId AND customization_signature <> :customizationSignature
+  `, { cartId: cart.id, productId, customizationSignature: signature });
+  if (Number(rows[0].stockQuantity || 0) < Number(otherRows[0]?.quantity || 0) + quantity) {
     const error = new Error('Not enough stock is available for this product');
     error.statusCode = 409;
     throw error;
   }
-  await query(`
+  const result = await query(`
     UPDATE cart_items
     SET quantity = :quantity
-    WHERE cart_id = :cartId AND product_id = :productId
-  `, { cartId: cart.id, productId, quantity });
+    WHERE cart_id = :cartId AND product_id = :productId AND customization_signature = :customizationSignature
+  `, { cartId: cart.id, productId, quantity, customizationSignature: signature });
+  if (result.affectedRows !== 1) {
+    const error = new Error('Cart item not found');
+    error.statusCode = 404;
+    throw error;
+  }
   return cartForUser(customerUserId);
 }
 
-async function removeCartItem(customerUserId, productId) {
+async function removeCartItem(customerUserId, productId, customizationSignatureValue = '') {
   const cart = await activeCartForUser(customerUserId);
-  await query('DELETE FROM cart_items WHERE cart_id = :cartId AND product_id = :productId', { cartId: cart.id, productId });
+  await query('DELETE FROM cart_items WHERE cart_id = :cartId AND product_id = :productId AND customization_signature = :customizationSignature', {
+    cartId: cart.id,
+    productId,
+    customizationSignature: String(customizationSignatureValue || '')
+  });
   return cartForUser(customerUserId);
 }
 
@@ -1777,6 +3363,7 @@ async function releaseEligibleServiceBookingFunds(bookingId) {
 async function createOrder({ customer = {}, paymentMethod = 'Dime', items = [] }, customerUserId = null) {
   const cart = customerUserId ? await activeCartForUser(customerUserId) : null;
   const cartItems = customerUserId && !items.length ? await cartItemsForCart(cart.id) : [];
+  const usingCartItems = customerUserId && !items.length;
   const orderItems = items.length ? items : cartItems;
 
   if (!orderItems.length) {
@@ -1851,19 +3438,46 @@ async function createOrder({ customer = {}, paymentMethod = 'Dime', items = [] }
       const originalPrice = product ? Number(product.price || 0) : Number(item.price || 0);
       const discount = product ? await bestDiscountForProduct(product, user.id, originalPrice, tx.query, cart?.id || item.cartId || null) : null;
       const unitPrice = discountedUnitPrice(originalPrice, discount);
+      let customizationBundle = {
+        customizations: [],
+        previews: [],
+        signature: ''
+      };
+      if (product?.id) {
+        if (usingCartItems) {
+          customizationBundle = {
+            customizations: Array.isArray(item.customizations) ? item.customizations : [],
+            previews: Array.isArray(item.customizationPreviews) ? item.customizationPreviews : [],
+            signature: item.customizationSignature || ''
+          };
+        } else {
+          const validation = await validateProductCustomization(product.id, item);
+          customizationBundle = {
+            customizations: validation.customizations,
+            previews: validation.previews,
+            signature: validation.customizationSignature
+          };
+        }
+      }
+      const customizationAddOnTotal = customizationBundle.customizations.reduce((sum, customization) => sum + Number(customization.priceDeltaJmd || 0), 0);
       const preparedItem = {
         orderItemId: randomUUID(),
         productId: product?.id || null,
         vendorId,
         storeId,
         name: item.name || product?.name || 'Item',
-        originalPrice,
-        price: unitPrice,
+        originalPrice: originalPrice + customizationAddOnTotal,
+        price: unitPrice + customizationAddOnTotal,
         qty,
-        discount: normalizeDiscount(discount)
+        discount: normalizeDiscount(discount),
+        customizationAddOnTotal,
+        customizationSignature: customizationBundle.signature,
+        customizations: customizationBundle.customizations,
+        customizationPreviews: customizationBundle.previews,
+        customizationSummary: customizationBundle.customizations.map(customizationSummaryLine)
       };
       preparedItems.push(preparedItem);
-      subtotal += unitPrice * qty;
+      subtotal += preparedItem.price * qty;
     }
 
     await tx.query(`
@@ -1904,6 +3518,57 @@ async function createOrder({ customer = {}, paymentMethod = 'Dime', items = [] }
           error.statusCode = 409;
           throw error;
         }
+      }
+      for (const customization of item.customizations || []) {
+        await tx.query(`
+          INSERT INTO order_item_customizations (id, order_item_id, field_id, field_key, field_label, field_type, value_text, value_json, price_delta_jmd)
+          VALUES (:id, :orderItemId, :fieldId, :fieldKey, :fieldLabel, :fieldType, :valueText, :valueJson, :priceDeltaJmd)
+        `, {
+          id: randomUUID(),
+          orderItemId: item.orderItemId,
+          fieldId: customization.fieldId || null,
+          fieldKey: customization.fieldKey,
+          fieldLabel: customization.fieldLabel,
+          fieldType: customization.fieldType,
+          valueText: customization.valueText || null,
+          valueJson: customization.valueJson === undefined || customization.valueJson === null ? null : JSON.stringify(customization.valueJson),
+          priceDeltaJmd: nonNegativeInt(customization.priceDeltaJmd, 0)
+        });
+      }
+      for (const preview of item.customizationPreviews || []) {
+        await tx.query(`
+          INSERT INTO order_item_customization_previews (id, order_item_id, surface_key, preview_image_url, preview_json)
+          VALUES (:id, :orderItemId, :surfaceKey, :previewImageUrl, :previewJson)
+        `, {
+          id: randomUUID(),
+          orderItemId: item.orderItemId,
+          surfaceKey: preview.surfaceKey,
+          previewImageUrl: preview.previewImageUrl || null,
+          previewJson: preview.previewJson === undefined || preview.previewJson === null ? null : JSON.stringify(preview.previewJson)
+        });
+      }
+      if ((item.customizations || []).length || (item.customizationPreviews || []).length) {
+        await recordCustomizationAudit({
+          orderId,
+          orderItemId: item.orderItemId,
+          productId: item.productId,
+          vendorId: item.vendorId,
+          actorUserId: user.id,
+          actorRole: 'customer',
+          action: 'order_customization_captured',
+          details: {
+            itemName: item.name,
+            signature: item.customizationSignature,
+            fields: (item.customizations || []).map((customization) => ({
+              fieldKey: customization.fieldKey,
+              fieldLabel: customization.fieldLabel,
+              fieldType: customization.fieldType,
+              valueText: customization.valueText,
+              priceDeltaJmd: customization.priceDeltaJmd || 0
+            })),
+            surfaces: (item.customizationPreviews || []).map((preview) => preview.surfaceKey)
+          }
+        }, tx.query);
       }
     }
 
@@ -2132,6 +3797,35 @@ async function findOrderById(orderId, customerUserId = null) {
     JOIN stores s ON s.id = oi.store_id
     WHERE oi.order_id = :orderId
   `, { orderId });
+  const itemIds = items.map((item) => item.id);
+  const [customizationRows, previewRows] = itemIds.length ? await Promise.all([
+    query(`
+      SELECT id, order_item_id AS orderItemId, field_id AS fieldId, field_key AS fieldKey, field_label AS fieldLabel, field_type AS fieldType, value_text AS valueText, value_json AS valueJson, price_delta_jmd AS priceDeltaJmd, created_at AS createdAt
+      FROM order_item_customizations
+      WHERE FIND_IN_SET(order_item_id, :itemIds)
+      ORDER BY created_at
+    `, { itemIds: itemIds.join(',') }),
+    query(`
+      SELECT id, order_item_id AS orderItemId, surface_key AS surfaceKey, preview_image_url AS previewImageUrl, preview_json AS previewJson, created_at AS createdAt
+      FROM order_item_customization_previews
+      WHERE FIND_IN_SET(order_item_id, :itemIds)
+      ORDER BY created_at
+    `, { itemIds: itemIds.join(',') })
+  ]) : [[], []];
+  const customizationsByItem = groupByValue(customizationRows.map(normalizeStoredCustomization), 'orderItemId');
+  const previewsByItem = groupByValue(previewRows.map(normalizeStoredPreview), 'orderItemId');
+  const itemsWithCustomizations = items.map((item) => {
+    const customizations = customizationsByItem.get(item.id) || [];
+    const customizationPreviews = previewsByItem.get(item.id) || [];
+    const customizationAddOnTotal = customizations.reduce((sum, customization) => sum + Number(customization.priceDeltaJmd || 0), 0);
+    return {
+      ...item,
+      customizations,
+      customizationPreviews,
+      customizationAddOnTotal,
+      customizationSummary: customizations.map(customizationSummaryLine)
+    };
+  });
   return {
     ...rows[0],
     total: Number(rows[0].total || 0),
@@ -2148,7 +3842,7 @@ async function findOrderById(orderId, customerUserId = null) {
       orderId
     } : null,
     invoiceNumber: `INV-${orderId}`,
-    items
+    items: itemsWithCustomizations
   };
 }
 
@@ -2271,6 +3965,68 @@ async function listVendorOrders(vendorIds = []) {
     GROUP BY o.id, oi.vendor_id, v.business_name, u.full_name, u.email, u.phone, o.status, o.payment_status, o.payment_method, o.delivery_address, o.created_at
     ORDER BY o.created_at DESC
   `, { vendorIds: vendorIds.join(',') });
+  const orderIds = [...new Set(rows.map((order) => order.orderId).filter(Boolean))];
+  const orderItems = orderIds.length ? await query(`
+    SELECT
+      oi.id,
+      oi.order_id AS orderId,
+      oi.product_id AS productId,
+      oi.item_name AS name,
+      oi.unit_price_jmd AS price,
+      oi.quantity AS qty,
+      oi.line_total_jmd AS lineTotal,
+      oi.vendor_id AS vendorId,
+      oi.store_id AS storeId,
+      st.name AS storeName,
+      st.slug AS storeSlug,
+      oi.fulfillment_status AS fulfillmentStatus,
+      oi.vendor_completed_at AS vendorCompletedAt,
+      oi.customer_received_at AS customerReceivedAt,
+      oi.funds_released_at AS fundsReleasedAt
+    FROM order_items oi
+    JOIN stores st ON st.id = oi.store_id
+    WHERE FIND_IN_SET(oi.vendor_id, :vendorIds)
+      AND FIND_IN_SET(oi.order_id, :orderIds)
+    ORDER BY oi.created_at, oi.id
+  `, { vendorIds: vendorIds.join(','), orderIds: orderIds.join(',') }) : [];
+  const orderItemIds = orderItems.map((item) => item.id);
+  const [customizationRows, previewRows] = orderItemIds.length ? await Promise.all([
+    query(`
+      SELECT id, order_item_id AS orderItemId, field_id AS fieldId, field_key AS fieldKey, field_label AS fieldLabel, field_type AS fieldType, value_text AS valueText, value_json AS valueJson, price_delta_jmd AS priceDeltaJmd, created_at AS createdAt
+      FROM order_item_customizations
+      WHERE FIND_IN_SET(order_item_id, :orderItemIds)
+      ORDER BY created_at
+    `, { orderItemIds: orderItemIds.join(',') }),
+    query(`
+      SELECT id, order_item_id AS orderItemId, surface_key AS surfaceKey, preview_image_url AS previewImageUrl, preview_json AS previewJson, created_at AS createdAt
+      FROM order_item_customization_previews
+      WHERE FIND_IN_SET(order_item_id, :orderItemIds)
+      ORDER BY created_at
+    `, { orderItemIds: orderItemIds.join(',') })
+  ]) : [[], []];
+  const customizationsByItem = groupByValue(customizationRows.map(normalizeStoredCustomization), 'orderItemId');
+  const previewsByItem = groupByValue(previewRows.map(normalizeStoredPreview), 'orderItemId');
+  const itemsByOrderVendor = new Map();
+  for (const item of orderItems) {
+    const customizations = customizationsByItem.get(item.id) || [];
+    const customizationPreviews = previewsByItem.get(item.id) || [];
+    const customizationAddOnTotal = customizations.reduce((sum, customization) => sum + Number(customization.priceDeltaJmd || 0), 0);
+    const normalized = {
+      ...item,
+      price: Number(item.price || 0),
+      qty: Number(item.qty || 0),
+      lineTotal: Number(item.lineTotal || 0),
+      customizations,
+      customizationPreviews,
+      customizationAddOnTotal,
+      customizationSummary: customizations.map(customizationSummaryLine)
+    };
+    const key = `${item.orderId}:${item.vendorId}`;
+    const list = itemsByOrderVendor.get(key) || [];
+    list.push(normalized);
+    itemsByOrderVendor.set(key, list);
+  }
+
   return rows.map((order) => ({
     ...order,
     productCount: Number(order.productCount || 0),
@@ -2281,7 +4037,8 @@ async function listVendorOrders(vendorIds = []) {
     pendingPaymentCredits: Number(order.pendingPaymentCredits || 0),
     daysWaitingForReceipt: Number(order.daysWaitingForReceipt || 0),
     isReceiptLate: Number(order.daysWaitingForReceipt || 0) >= 2,
-    hasOpenDispute: Number(order.openDisputeCount || 0) > 0
+    hasOpenDispute: Number(order.openDisputeCount || 0) > 0,
+    items: itemsByOrderVendor.get(`${order.orderId}:${order.vendorId}`) || []
   }));
 }
 
@@ -2325,7 +4082,7 @@ function normalizeFulfillmentStatus(value) {
   return ['pending', 'preparing', 'ready_for_pickup', 'out_for_delivery', 'fulfilled', 'cancelled'].includes(value) ? value : null;
 }
 
-async function updateOrderFulfillment(orderId, vendorId, fulfillmentStatus) {
+async function updateOrderFulfillment(orderId, vendorId, fulfillmentStatus, orderItemId = null, actor = {}) {
   const status = normalizeFulfillmentStatus(fulfillmentStatus);
   if (!status) {
     const error = new Error('Fulfillment update requires a valid fulfillmentStatus');
@@ -2346,12 +4103,44 @@ async function updateOrderFulfillment(orderId, vendorId, fulfillmentStatus) {
         WHEN :status = 'fulfilled' THEN COALESCE(vendor_completed_at, CURRENT_TIMESTAMP)
         ELSE vendor_completed_at
       END
-    WHERE order_id = :orderId AND vendor_id = :vendorId
-    `, { orderId, vendorId, status });
+    WHERE order_id = :orderId
+      AND vendor_id = :vendorId
+      ${orderItemId ? 'AND id = :orderItemId' : ''}
+    `, { orderId, vendorId, status, orderItemId });
   if (result.affectedRows < 1) {
     const error = new Error('Order item not found for this vendor');
     error.statusCode = 404;
     throw error;
+  }
+  const customizedRows = await query(`
+    SELECT
+      oi.id AS orderItemId,
+      oi.product_id AS productId,
+      oi.vendor_id AS vendorId,
+      oi.item_name AS itemName,
+      COUNT(oic.id) AS customizationCount
+    FROM order_items oi
+    LEFT JOIN order_item_customizations oic ON oic.order_item_id = oi.id
+    WHERE oi.order_id = :orderId
+      AND oi.vendor_id = :vendorId
+      ${orderItemId ? 'AND oi.id = :orderItemId' : ''}
+    GROUP BY oi.id, oi.product_id, oi.vendor_id, oi.item_name
+    HAVING customizationCount > 0
+  `, { orderId, vendorId, orderItemId });
+  for (const row of customizedRows) {
+    await recordCustomizationAudit({
+      orderId,
+      orderItemId: row.orderItemId,
+      productId: row.productId,
+      vendorId: row.vendorId,
+      actorUserId: actor.actorUserId || null,
+      actorRole: actor.actorRole || 'vendor',
+      action: 'custom_order_item_fulfillment_update',
+      details: {
+        itemName: row.itemName,
+        fulfillmentStatus: status
+      }
+    });
   }
   if (status === 'fulfilled') {
     await releaseEligibleOrderFunds(orderId, vendorId);
@@ -2409,6 +4198,35 @@ async function confirmOrderReceived(orderId, customerUserId, allowAdmin = false)
     const error = new Error('No fulfilled items are waiting for receipt confirmation');
     error.statusCode = 409;
     throw error;
+  }
+
+  const customizedRows = await query(`
+    SELECT
+      oi.id AS orderItemId,
+      oi.product_id AS productId,
+      oi.vendor_id AS vendorId,
+      oi.item_name AS itemName,
+      COUNT(oic.id) AS customizationCount
+    FROM order_items oi
+    LEFT JOIN order_item_customizations oic ON oic.order_item_id = oi.id
+    WHERE oi.order_id = :orderId
+      AND oi.customer_received_at IS NOT NULL
+    GROUP BY oi.id, oi.product_id, oi.vendor_id, oi.item_name
+    HAVING customizationCount > 0
+  `, { orderId });
+  for (const row of customizedRows) {
+    await recordCustomizationAudit({
+      orderId,
+      orderItemId: row.orderItemId,
+      productId: row.productId,
+      vendorId: row.vendorId,
+      actorUserId: customerUserId,
+      actorRole: allowAdmin ? 'admin' : 'customer',
+      action: 'custom_order_item_receipt_confirmed',
+      details: {
+        itemName: row.itemName
+      }
+    });
   }
 
   await releaseEligibleOrderFunds(orderId);
@@ -2497,6 +4315,36 @@ async function createOrderDispute(orderId, body = {}, createdByUserId, role = 'c
     reason,
     notes: body.notes || null
   });
+  const customizedRows = await query(`
+    SELECT
+      oi.id AS orderItemId,
+      oi.product_id AS productId,
+      oi.vendor_id AS vendorId,
+      oi.item_name AS itemName,
+      COUNT(oic.id) AS customizationCount
+    FROM order_items oi
+    LEFT JOIN order_item_customizations oic ON oic.order_item_id = oi.id
+    WHERE oi.order_id = :orderId
+      AND (:vendorId IS NULL OR oi.vendor_id = :vendorId)
+    GROUP BY oi.id, oi.product_id, oi.vendor_id, oi.item_name
+    HAVING customizationCount > 0
+  `, { orderId, vendorId });
+  for (const row of customizedRows) {
+    await recordCustomizationAudit({
+      orderId,
+      orderItemId: row.orderItemId,
+      productId: row.productId,
+      vendorId: row.vendorId,
+      actorUserId: createdByUserId,
+      actorRole: role,
+      action: 'custom_order_item_dispute_opened',
+      details: {
+        itemName: row.itemName,
+        reason,
+        notes: body.notes || null
+      }
+    });
+  }
   const rows = await query(`
     SELECT id, order_id AS orderId, vendor_id AS vendorId, customer_user_id AS customerUserId, reason, status, notes, created_at AS createdAt, updated_at AS updatedAt
     FROM order_disputes
@@ -3423,33 +5271,60 @@ async function vendorDocumentDownload(documentId) {
   }
 
   const fileName = path.basename(document.fileUrl);
-  const filePath = path.resolve(VENDOR_DOCUMENT_UPLOAD_DIR, fileName);
-  const uploadRoot = path.resolve(VENDOR_DOCUMENT_UPLOAD_DIR);
-  if (!filePath.startsWith(`${uploadRoot}${path.sep}`)) {
-    return null;
-  }
-
-  return {
-    ...document,
-    fileName,
-    filePath,
-    contentType: contentTypeForDocument(fileName)
-  };
+  const download = await uploadMediaDownload(fileName, VENDOR_DOCUMENT_UPLOAD_DIR, 'vendor-documents', contentTypeForDocument);
+  return download ? { ...document, ...download } : null;
 }
 
-function listingMediaDownload(fileName) {
+async function uploadMediaDownload(fileName, uploadDir, storageFolder, fallbackContentType) {
   const safeName = path.basename(String(fileName || ''));
   if (!safeName) return null;
-  const filePath = path.resolve(LISTING_MEDIA_UPLOAD_DIR, safeName);
-  const uploadRoot = path.resolve(LISTING_MEDIA_UPLOAD_DIR);
+  const filePath = path.resolve(uploadDir, safeName);
+  const uploadRoot = path.resolve(uploadDir);
   if (!filePath.startsWith(`${uploadRoot}${path.sep}`)) {
     return null;
   }
-  return {
-    fileName: safeName,
-    filePath,
-    contentType: contentTypeForListingImage(safeName)
-  };
+
+  try {
+    return {
+      fileName: safeName,
+      buffer: await fs.readFile(filePath),
+      contentType: fallbackContentType(safeName)
+    };
+  } catch {
+    // Render disks can be reset or misconfigured. The database backup lets uploads survive deploys.
+  }
+
+  if (!config.useDatabase) return null;
+
+  const storageKey = `uploads/${storageFolder}/${safeName}`;
+  try {
+    const rows = await query(`
+      SELECT file_name AS fileName, content_type AS contentType, data
+      FROM uploaded_media
+      WHERE storage_key_hash = :storageKeyHash
+      LIMIT 1
+    `, { storageKeyHash: storageKeyHash(storageKey) });
+    const media = rows[0];
+    if (!media?.data) return null;
+    return {
+      fileName: media.fileName || safeName,
+      buffer: Buffer.isBuffer(media.data) ? media.data : Buffer.from(media.data),
+      contentType: media.contentType || fallbackContentType(safeName)
+    };
+  } catch (error) {
+    if (['ER_NO_SUCH_TABLE', 'ER_BAD_FIELD_ERROR'].includes(error.code)) {
+      return null;
+    }
+    throw error;
+  }
+}
+
+async function listingMediaDownload(fileName) {
+  return uploadMediaDownload(fileName, LISTING_MEDIA_UPLOAD_DIR, 'listing-media', contentTypeForListingImage);
+}
+
+async function customizationMediaDownload(fileName) {
+  return uploadMediaDownload(fileName, CUSTOMIZATION_MEDIA_UPLOAD_DIR, 'customization-media', contentTypeForListingImage);
 }
 
 async function storeByVendorId(vendorId) {
@@ -3498,11 +5373,17 @@ async function listVendorProducts(vendorIds) {
       p.status,
       p.created_at AS createdAt,
       product_image.imageUrl,
+      customization_image.imageUrl AS customizationImageUrl,
       discounts.discountIds,
       discounts.discountNames,
+      customization_template.id AS customizationTemplateId,
+      customization_template.status AS customizationTemplateStatus,
       feature.featuredUntil
     FROM products p
     ${primaryProductImageJoin()}
+    ${primaryProductCustomizationImageJoin('customization_image', false)}
+    LEFT JOIN product_customization_templates customization_template
+      ON customization_template.product_id = p.id
     LEFT JOIN (
       SELECT
         dp.product_id AS productId,
@@ -3533,8 +5414,10 @@ async function listVendorProducts(vendorIds) {
       hasDiscount: price < originalPrice,
       discount: normalizeDiscount(discount),
       stockQuantity: Number(row.stockQuantity || 0),
+      imageUrl: row.imageUrl || row.customizationImageUrl || '',
       featuredUntil: row.featuredUntil || null,
-      isFeatured: Boolean(row.featuredUntil)
+      isFeatured: Boolean(row.featuredUntil),
+      isCustomizable: Boolean(row.customizationTemplateId)
     };
   }));
 }
@@ -3682,8 +5565,9 @@ async function vendorOperationsForUser(userId, includeAll = false) {
   const vendors = (await listVendors()).filter((vendor) => vendorIds.includes(vendor.id));
   const stores = (await Promise.all(vendorIds.map(storeByVendorId))).filter(Boolean);
   const storeIds = stores.map((store) => store.id);
-  const [products, services, jobs, documents, media, socialLinks, registrationRequests, notifications, cartCustomers, discounts, orders, bookings, wallets, walletLedger, checkoutRequests, payoutProfiles, walletAudit] = await Promise.all([
+  const [products, customizationTemplates, services, jobs, documents, media, socialLinks, registrationRequests, notifications, cartCustomers, discounts, orders, bookings, wallets, walletLedger, checkoutRequests, payoutProfiles, walletAudit] = await Promise.all([
     listVendorProducts(vendorIds),
+    listCustomizationTemplates({ vendorIds }),
     listVendorServices(vendorIds),
     listVendorJobs(vendorIds),
     listVendorDocuments(vendorIds),
@@ -3709,7 +5593,7 @@ async function vendorOperationsForUser(userId, includeAll = false) {
     includeAll ? listWalletAuditReport(vendorIds) : []
   ]);
 
-  return { vendors, stores, products, services, jobs, documents, media, socialLinks, registrationRequests, notifications, cartCustomers, discounts, orders, bookings, wallets, walletLedger, checkoutRequests, payoutProfiles, walletAudit };
+  return { vendors, stores, products, customizationTemplates, services, jobs, documents, media, socialLinks, registrationRequests, notifications, cartCustomers, discounts, orders, bookings, wallets, walletLedger, checkoutRequests, payoutProfiles, walletAudit };
 }
 
 async function updateStore(vendorId, body) {
@@ -3811,7 +5695,7 @@ async function updateProduct(productId, body) {
     price: Number(body.price ?? product.price_jmd) || 0,
     stockQuantity: Math.max(0, Math.floor(Number(body.stockQuantity ?? product.stock_quantity) || 0)),
     deliveryDay: body.deliveryDay ?? product.delivery_day,
-    type: body.type === 'food' ? 'food' : product.type,
+    type: ['product', 'food'].includes(body.type) ? body.type : product.type,
     status
   });
   return (await listVendorProducts([product.vendor_id])).find((item) => item.id === productId);
@@ -4004,6 +5888,9 @@ async function createProductImage(productId, body) {
     error.statusCode = 400;
     throw error;
   }
+  if (body.makePrimary) {
+    await query('UPDATE product_images SET sort_order = sort_order + 1 WHERE product_id = :productId', { productId });
+  }
   await query(`
     INSERT INTO product_images (id, product_id, url, alt_text, sort_order)
     VALUES (:id, :productId, :url, :altText, :sortOrder)
@@ -4012,9 +5899,9 @@ async function createProductImage(productId, body) {
     productId,
     url,
     altText: body.altText || null,
-    sortOrder: Number(body.sortOrder) || 0
+    sortOrder: body.makePrimary ? 0 : Number(body.sortOrder) || 0
   });
-  return { id, productId, url, altText: body.altText || '', sortOrder: Number(body.sortOrder) || 0 };
+  return { id, productId, url, altText: body.altText || '', sortOrder: body.makePrimary ? 0 : Number(body.sortOrder) || 0 };
 }
 
 async function createStoreMedia(storeId, body) {
@@ -6202,8 +8089,13 @@ module.exports = {
   createVendorDocument,
   createVendorCheckoutRequest,
   createReview,
+  customizationMediaDownload,
   customerDashboard,
   defaultVendorIdForUser,
+  deleteCustomizationField,
+  deleteCustomizationFieldOption,
+  deleteCustomizationPlacement,
+  deleteCustomizationSurface,
   deleteDiscount,
   deleteStoreSocialLink,
   findJobById,
@@ -6220,6 +8112,8 @@ module.exports = {
   findUserByEmailPhone,
   isDatabaseEnabled,
   adminFinanceSummary,
+  customizationTemplateByProductId,
+  customizationTemplateById,
   listApplications,
   listApplicationsForUser,
   listAdminAuditLogs,
@@ -6227,6 +8121,8 @@ module.exports = {
   listComplianceAlerts,
   listCustomerAddresses,
   listCustomerReviewTargets,
+  listCustomizationTemplates,
+  listCustomizationUploads,
   listFoods,
   listJobs,
   listingMediaDownload,
@@ -6262,7 +8158,18 @@ module.exports = {
   reviewVendorDocument,
   repairWalletAudit,
   runComplianceAutomation,
+  saveCustomizationField,
+  saveCustomizationFieldOption,
+  saveCustomizationPlacement,
+  saveCustomizationSurface,
   storeByVendorId,
+  updateCustomizationField,
+  updateCustomizationFieldOption,
+  updateCustomizationPlacement,
+  updateCustomizationSurface,
+  updateCustomizationSurfaceImage,
+  updateCustomizationTemplateStatus,
+  upsertProductCustomizationTemplate,
   updateJob,
   updateCartItem,
   updateDiscountStatus,
@@ -6288,10 +8195,16 @@ module.exports = {
   vendorIdForDocument,
   vendorIdForDiscount,
   vendorIdForBooking,
+  vendorIdForCustomizationField,
+  vendorIdForCustomizationOption,
+  vendorIdForCustomizationPlacement,
+  vendorIdForCustomizationSurface,
+  vendorIdForCustomizationTemplate,
   vendorIdForJob,
   vendorIdForProduct,
   vendorIdForService,
   vendorIdForStore,
   vendorDocumentDownload,
-  vendorIdsForUser
+  vendorIdsForUser,
+  validateProductCustomization
 };

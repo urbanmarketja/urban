@@ -197,7 +197,11 @@ interface CustomerAddress {
                       <span class="discount-badge">{{ discountLabel(product) }}</span>
                     }
                   </div>
-                  <button class="button-sm" type="button" (click)="cart.addProduct(product)">Add to cart</button>
+                  @if (product.isCustomizable) {
+                    <a class="button-sm" [routerLink]="['/vendor', store.slug, 'product', product.id]">Customize</a>
+                  } @else {
+                    <button class="button-sm" type="button" (click)="cart.addProduct(product)">Add to cart</button>
+                  }
                 </div>
               </article>
             }

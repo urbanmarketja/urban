@@ -81,7 +81,7 @@ COMPLIANCE_AUTOMATION_ENABLED=true
 Important Render notes:
 
 - `PAYMENT_PROVIDER=mock` keeps the current internal payment-credit workflow active. It records customer payment completion inside the site, creates vendor credits, places those credits on hold, and releases them after fulfillment and customer receipt confirmation. It does not connect to a live card/bank provider yet.
-- The blueprint uses a persistent disk for resume uploads. If you remove the disk or use a free service without storage, uploaded PDFs will not be reliable after restarts.
+- The blueprint uses a persistent disk for uploaded files. Uploaded media is also backed up to the `uploaded_media` table so product photos, store photos, service photos, resumes, vendor documents, and customization images survive deploys and filesystem resets.
 - `FRONTEND_ORIGIN` must exactly match the public Netlify URL, including `https://`.
 - Run `npm run db:seed` only if you intentionally want the demo users, vendors, jobs, listings, orders, and test data in that database.
 
@@ -156,7 +156,7 @@ Before calling the deployment ready, check these flows on the live Netlify site:
 
 - Do not use the default `JWT_SECRET`, `PASSWORD_PEPPER`, or `PAYMENT_WEBHOOK_SECRET` in production.
 - Keep `FRONTEND_ORIGIN` on Render exactly matched to the Netlify site URL.
-- Resume PDF uploads use `UPLOAD_DIR`; Render should have a persistent disk mounted for this path.
+- File uploads use `UPLOAD_DIR`; Render should have a persistent disk mounted for this path. The `uploaded_media` table is the database fallback if the filesystem copy is missing.
 - Customer payments are still handled through the current internal/mock payment confirmation flow until a real provider is connected.
 - Store Aiven credentials and CA certificates only in platform secrets, not in the repository.
 - Use `Backend/scripts/backup-db.js` for database backups and store production backups outside Render.

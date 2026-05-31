@@ -1,5 +1,4 @@
 const http = require('http');
-const fs = require('fs/promises');
 const config = require('./config');
 const { getAuthUser, hashPassword, requireRoles, safeUser, signToken, verifyPassword } = require('./auth');
 const { databaseMode } = require('./db/mysql');
@@ -338,10 +337,19 @@ function createInvoiceLines(order) {
   }
   const storeLines = [...grouped.values()].flatMap((store) => [
     `Store: ${store.storeName}`,
-    ...store.items.map((item) => {
+    ...store.items.flatMap((item) => {
       const qty = Number(item.qty || item.quantity || 1);
       const price = Number(item.price || 0);
-      return `- ${item.name} x${qty} - JMD ${(price * qty).toLocaleString()}`;
+      const itemLines = [`- ${item.name} x${qty} - JMD ${(price * qty).toLocaleString()}`];
+      if (Array.isArray(item.customizationSummary) && item.customizationSummary.length) {
+        itemLines.push(`  Customization: ${item.customizationSummary.join('; ')}`);
+      } else if (item.customizationSummary) {
+        itemLines.push(`  Customization: ${item.customizationSummary}`);
+      }
+      if (Array.isArray(item.customizationPreviews) && item.customizationPreviews.length) {
+        itemLines.push(`  Preview reference: ${item.customizationPreviews.map((preview) => preview.surfaceKey || preview.previewImageUrl || 'preview').join(', ')}`);
+      }
+      return itemLines;
     }),
     `Store subtotal: JMD ${store.subtotal.toLocaleString()}`,
     ''
@@ -365,6 +373,63 @@ function createInvoiceLines(order) {
     '',
     'Thank you for your order.'
   ];
+}
+
+function createProductionSheetLines(order, vendorId = null) {
+  const items = (order.items || []).filter((item) => !vendorId || item.vendorId === vendorId);
+  const vendors = [...new Set(items.map((item) => item.storeName || item.vendorName || 'Vendor'))];
+  const lines = [
+    'Urban Market JA',
+    `Production sheet: ${order.orderId}`,
+    `Invoice: ${order.invoiceNumber}`,
+    `Date: ${order.createdAt}`,
+    `Vendor/store: ${vendors.join(', ') || 'No items selected'}`,
+    `Order stage: ${orderStageLabel(order)}`,
+    '',
+    'Production checklist:',
+    '[ ] Review customer customization details',
+    '[ ] Check uploaded artwork/image quality',
+    '[ ] Produce item exactly as approved',
+    '[ ] Package item',
+    '[ ] Mark fulfilled in vendor dashboard',
+    ''
+  ];
+
+  for (const item of items) {
+    const qty = Number(item.qty || item.quantity || 1);
+    lines.push(`Item: ${item.name}`);
+    lines.push(`Quantity: ${qty}`);
+    lines.push(`Store: ${item.storeName || item.vendorName || 'Vendor'}`);
+    lines.push(`Fulfillment status: ${item.fulfillmentStatus || 'pending'}`);
+    if (Array.isArray(item.customizationSummary) && item.customizationSummary.length) {
+      lines.push('Customization summary:');
+      for (const summary of item.customizationSummary) lines.push(`- ${summary}`);
+    }
+    const customizations = Array.isArray(item.customizations) ? item.customizations : [];
+    if (customizations.length) {
+      lines.push('Customer fields:');
+      for (const customization of customizations) {
+        lines.push(`- ${customization.fieldLabel || customization.fieldKey}: ${customization.valueText || ''}`);
+        const valueJson = customization.valueJson || {};
+        const imageUrl = valueJson.url || valueJson.imageUrl || '';
+        if (customization.fieldType === 'image' && imageUrl) {
+          lines.push(`  Uploaded image: ${imageUrl}`);
+          lines.push(`  Review status: ${valueJson.reviewStatus || 'pending_vendor_review'}`);
+        }
+      }
+    }
+    const previews = Array.isArray(item.customizationPreviews) ? item.customizationPreviews : [];
+    if (previews.length) {
+      lines.push('Preview surfaces:');
+      for (const preview of previews) {
+        lines.push(`- ${preview.surfaceKey || 'surface'}: ${preview.previewImageUrl || preview.previewJson?.baseImageUrl || 'layout saved'}`);
+      }
+    }
+    lines.push('[ ] Production complete');
+    lines.push('');
+  }
+
+  return lines;
 }
 
 function withEligibility(vendor) {
@@ -393,17 +458,16 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  const listingMediaMatch = url.pathname.match(/^\/api\/uploads\/listing-media\/([^/]+)$/);
+  const listingMediaMatch = url.pathname.match(/^\/(?:api\/)?uploads\/listing-media\/([^/]+)$/);
   if (req.method === 'GET' && listingMediaMatch) {
     if (repository.isDatabaseEnabled()) {
       try {
-        const download = repository.listingMediaDownload(listingMediaMatch[1]);
+        const download = await repository.listingMediaDownload(listingMediaMatch[1]);
         if (!download) {
           sendJson(res, 404, { error: 'Listing image not found' });
           return;
         }
-        const file = await fs.readFile(download.filePath);
-        sendBinary(res, 200, file, download.contentType, {
+        sendBinary(res, 200, download.buffer, download.contentType, {
           'Cache-Control': 'public, max-age=86400'
         });
         return;
@@ -413,6 +477,28 @@ const server = http.createServer(async (req, res) => {
       }
     }
     sendJson(res, 404, { error: 'Listing image not found' });
+    return;
+  }
+
+  const customizationMediaMatch = url.pathname.match(/^\/(?:api\/)?uploads\/customization-media\/([^/]+)$/);
+  if (req.method === 'GET' && customizationMediaMatch) {
+    if (repository.isDatabaseEnabled()) {
+      try {
+        const download = await repository.customizationMediaDownload(customizationMediaMatch[1]);
+        if (!download) {
+          sendJson(res, 404, { error: 'Customization image not found' });
+          return;
+        }
+        sendBinary(res, 200, download.buffer, download.contentType, {
+          'Cache-Control': 'private, max-age=86400'
+        });
+        return;
+      } catch {
+        sendJson(res, 404, { error: 'Customization image not found' });
+        return;
+      }
+    }
+    sendJson(res, 404, { error: 'Uploads require database mode' });
     return;
   }
 
@@ -468,6 +554,66 @@ const server = http.createServer(async (req, res) => {
       return;
     }
     sendJson(res, 200, { ...product, vendorName: vendor.name, vendorSlug: vendor.slug, storeSlug: vendor.slug, images: [] });
+    return;
+  }
+
+  const productCustomizationTemplateMatch = url.pathname.match(/^\/api\/products\/([^/]+)\/customization-template$/);
+  if (req.method === 'GET' && productCustomizationTemplateMatch) {
+    if (repository.isDatabaseEnabled()) {
+      try {
+        const productId = productCustomizationTemplateMatch[1];
+        const authUser = getAuthUser(req);
+        const vendorId = authUser && ['vendor', 'admin'].includes(authUser.role)
+          ? await repository.vendorIdForProduct(productId)
+          : null;
+        const canSeeDraft = vendorId && await authorizeVendorTarget(authUser, vendorId);
+        const template = canSeeDraft
+          ? await repository.customizationTemplateByProductId(productId)
+          : await repository.customizationTemplateByProductId(productId, { publicOnly: true });
+        sendJson(res, 200, template || { productId, isCustomizable: false, fields: [], surfaces: [] });
+        return;
+      } catch (error) {
+        return sendRouteError(res, error);
+      }
+    }
+    sendJson(res, 200, { productId: productCustomizationTemplateMatch[1], isCustomizable: false, fields: [], surfaces: [] });
+    return;
+  }
+
+  if (req.method === 'POST' && productCustomizationTemplateMatch) {
+    const authUser = requireRouteRoles(req, res, ['vendor', 'admin']);
+    if (!authUser) return;
+    if (repository.isDatabaseEnabled()) {
+      const productId = productCustomizationTemplateMatch[1];
+      const vendorId = await repository.vendorIdForProduct(productId);
+      if (!vendorId) {
+        sendJson(res, 404, { error: 'Product not found' });
+        return;
+      }
+      if (!await authorizeVendorTarget(authUser, vendorId)) {
+        sendJson(res, 403, { error: 'Vendor account cannot manage this product customization' });
+        return;
+      }
+      readJsonBody(req, 12000000)
+        .then((body) => repository.upsertProductCustomizationTemplate(productId, body))
+        .then((template) => sendJson(res, 200, template))
+        .catch((error) => sendJson(res, error.statusCode || 400, { error: error.message || 'Invalid JSON body' }));
+      return;
+    }
+    sendJson(res, 409, { error: 'Product customization requires database mode' });
+    return;
+  }
+
+  const productCustomizationValidateMatch = url.pathname.match(/^\/api\/products\/([^/]+)\/customizations\/validate$/);
+  if (req.method === 'POST' && productCustomizationValidateMatch) {
+    if (repository.isDatabaseEnabled()) {
+      readJsonBody(req, 12000000)
+        .then((body) => repository.validateProductCustomization(productCustomizationValidateMatch[1], body))
+        .then((validation) => sendJson(res, 200, validation))
+        .catch((error) => sendJson(res, error.statusCode || 400, { error: error.message || 'Invalid JSON body' }));
+      return;
+    }
+    sendJson(res, 409, { error: 'Product customization requires database mode' });
     return;
   }
 
@@ -560,6 +706,60 @@ const server = http.createServer(async (req, res) => {
       }
     }
     sendJson(res, 409, { error: 'Audit logs require database mode' });
+    return;
+  }
+
+  if (req.method === 'GET' && url.pathname === '/api/admin/customization-templates') {
+    const authUser = requireRouteRoles(req, res, ['admin']);
+    if (!authUser) return;
+    if (repository.isDatabaseEnabled()) {
+      try {
+        sendJson(res, 200, await repository.listCustomizationTemplates());
+        return;
+      } catch (error) {
+        return sendRouteError(res, error);
+      }
+    }
+    sendJson(res, 409, { error: 'Customization template review requires database mode' });
+    return;
+  }
+
+  if (req.method === 'GET' && url.pathname === '/api/admin/customization-uploads') {
+    const authUser = requireRouteRoles(req, res, ['admin']);
+    if (!authUser) return;
+    if (repository.isDatabaseEnabled()) {
+      try {
+        sendJson(res, 200, await repository.listCustomizationUploads());
+        return;
+      } catch (error) {
+        return sendRouteError(res, error);
+      }
+    }
+    sendJson(res, 409, { error: 'Customization upload review requires database mode' });
+    return;
+  }
+
+  const adminCustomizationTemplateStatusMatch = url.pathname.match(/^\/api\/admin\/customization-templates\/([^/]+)\/status$/);
+  if (req.method === 'POST' && adminCustomizationTemplateStatusMatch) {
+    const authUser = requireRouteRoles(req, res, ['admin']);
+    if (!authUser) return;
+    if (repository.isDatabaseEnabled()) {
+      readJsonBody(req)
+        .then(async (body) => {
+          const template = await repository.updateCustomizationTemplateStatus(adminCustomizationTemplateStatusMatch[1], body);
+          await repository.recordAdminAudit({
+            adminUserId: authUser.sub,
+            action: 'customization_template_status_update',
+            entityType: 'product_customization_template',
+            entityId: adminCustomizationTemplateStatusMatch[1],
+            details: { status: body.status, productId: template.productId, vendorId: template.vendorId }
+          });
+          sendJson(res, 200, template);
+        })
+        .catch((error) => sendJson(res, error.statusCode || 400, { error: error.message || 'Invalid JSON body' }));
+      return;
+    }
+    sendJson(res, 409, { error: 'Customization template review requires database mode' });
     return;
   }
 
@@ -1543,6 +1743,246 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  const customizationTemplateSurfaceMatch = url.pathname.match(/^\/api\/customization-templates\/([^/]+)\/surfaces$/);
+  if (req.method === 'POST' && customizationTemplateSurfaceMatch) {
+    const authUser = requireRouteRoles(req, res, ['vendor', 'admin']);
+    if (!authUser) return;
+    if (repository.isDatabaseEnabled()) {
+      const vendorId = await repository.vendorIdForCustomizationTemplate(customizationTemplateSurfaceMatch[1]);
+      if (!vendorId) {
+        sendJson(res, 404, { error: 'Customization template not found' });
+        return;
+      }
+      if (!await authorizeVendorTarget(authUser, vendorId)) {
+        sendJson(res, 403, { error: 'Vendor account cannot manage this customization template' });
+        return;
+      }
+      readJsonBody(req, 12000000)
+        .then((body) => repository.saveCustomizationSurface(customizationTemplateSurfaceMatch[1], body))
+        .then((template) => sendJson(res, 200, template))
+        .catch((error) => sendJson(res, error.statusCode || 400, { error: error.message || 'Invalid JSON body' }));
+      return;
+    }
+    sendJson(res, 409, { error: 'Product customization requires database mode' });
+    return;
+  }
+
+  const customizationSurfaceImageMatch = url.pathname.match(/^\/api\/customization-surfaces\/([^/]+)\/base-image$/);
+  if (req.method === 'POST' && customizationSurfaceImageMatch) {
+    const authUser = requireRouteRoles(req, res, ['vendor', 'admin']);
+    if (!authUser) return;
+    if (repository.isDatabaseEnabled()) {
+      const vendorId = await repository.vendorIdForCustomizationSurface(customizationSurfaceImageMatch[1]);
+      if (!vendorId) {
+        sendJson(res, 404, { error: 'Customization surface not found' });
+        return;
+      }
+      if (!await authorizeVendorTarget(authUser, vendorId)) {
+        sendJson(res, 403, { error: 'Vendor account cannot manage this customization surface' });
+        return;
+      }
+      readJsonBody(req, 12000000)
+        .then((body) => repository.updateCustomizationSurfaceImage(customizationSurfaceImageMatch[1], body))
+        .then((template) => sendJson(res, 200, template))
+        .catch((error) => sendJson(res, error.statusCode || 400, { error: error.message || 'Invalid JSON body' }));
+      return;
+    }
+    sendJson(res, 409, { error: 'Product customization requires database mode' });
+    return;
+  }
+
+  const customizationSurfaceMatch = url.pathname.match(/^\/api\/customization-surfaces\/([^/]+)$/);
+  if ((req.method === 'POST' || req.method === 'DELETE') && customizationSurfaceMatch) {
+    const authUser = requireRouteRoles(req, res, ['vendor', 'admin']);
+    if (!authUser) return;
+    if (repository.isDatabaseEnabled()) {
+      const vendorId = await repository.vendorIdForCustomizationSurface(customizationSurfaceMatch[1]);
+      if (!vendorId) {
+        sendJson(res, 404, { error: 'Customization surface not found' });
+        return;
+      }
+      if (!await authorizeVendorTarget(authUser, vendorId)) {
+        sendJson(res, 403, { error: 'Vendor account cannot manage this customization surface' });
+        return;
+      }
+      if (req.method === 'DELETE') {
+        repository.deleteCustomizationSurface(customizationSurfaceMatch[1])
+          .then((template) => sendJson(res, 200, template))
+          .catch((error) => sendJson(res, error.statusCode || 400, { error: error.message || 'Request failed' }));
+        return;
+      }
+      readJsonBody(req, 12000000)
+        .then((body) => repository.updateCustomizationSurface(customizationSurfaceMatch[1], body))
+        .then((template) => sendJson(res, 200, template))
+        .catch((error) => sendJson(res, error.statusCode || 400, { error: error.message || 'Invalid JSON body' }));
+      return;
+    }
+    sendJson(res, 409, { error: 'Product customization requires database mode' });
+    return;
+  }
+
+  const customizationTemplateFieldMatch = url.pathname.match(/^\/api\/customization-templates\/([^/]+)\/fields$/);
+  if (req.method === 'POST' && customizationTemplateFieldMatch) {
+    const authUser = requireRouteRoles(req, res, ['vendor', 'admin']);
+    if (!authUser) return;
+    if (repository.isDatabaseEnabled()) {
+      const vendorId = await repository.vendorIdForCustomizationTemplate(customizationTemplateFieldMatch[1]);
+      if (!vendorId) {
+        sendJson(res, 404, { error: 'Customization template not found' });
+        return;
+      }
+      if (!await authorizeVendorTarget(authUser, vendorId)) {
+        sendJson(res, 403, { error: 'Vendor account cannot manage this customization template' });
+        return;
+      }
+      readJsonBody(req)
+        .then((body) => repository.saveCustomizationField(customizationTemplateFieldMatch[1], body))
+        .then((template) => sendJson(res, 200, template))
+        .catch((error) => sendJson(res, error.statusCode || 400, { error: error.message || 'Invalid JSON body' }));
+      return;
+    }
+    sendJson(res, 409, { error: 'Product customization requires database mode' });
+    return;
+  }
+
+  const customizationFieldMatch = url.pathname.match(/^\/api\/customization-fields\/([^/]+)$/);
+  if ((req.method === 'POST' || req.method === 'DELETE') && customizationFieldMatch) {
+    const authUser = requireRouteRoles(req, res, ['vendor', 'admin']);
+    if (!authUser) return;
+    if (repository.isDatabaseEnabled()) {
+      const vendorId = await repository.vendorIdForCustomizationField(customizationFieldMatch[1]);
+      if (!vendorId) {
+        sendJson(res, 404, { error: 'Customization field not found' });
+        return;
+      }
+      if (!await authorizeVendorTarget(authUser, vendorId)) {
+        sendJson(res, 403, { error: 'Vendor account cannot manage this customization field' });
+        return;
+      }
+      if (req.method === 'DELETE') {
+        repository.deleteCustomizationField(customizationFieldMatch[1])
+          .then((template) => sendJson(res, 200, template))
+          .catch((error) => sendJson(res, error.statusCode || 400, { error: error.message || 'Request failed' }));
+        return;
+      }
+      readJsonBody(req)
+        .then((body) => repository.updateCustomizationField(customizationFieldMatch[1], body))
+        .then((template) => sendJson(res, 200, template))
+        .catch((error) => sendJson(res, error.statusCode || 400, { error: error.message || 'Invalid JSON body' }));
+      return;
+    }
+    sendJson(res, 409, { error: 'Product customization requires database mode' });
+    return;
+  }
+
+  const customizationFieldOptionMatch = url.pathname.match(/^\/api\/customization-fields\/([^/]+)\/options$/);
+  if (req.method === 'POST' && customizationFieldOptionMatch) {
+    const authUser = requireRouteRoles(req, res, ['vendor', 'admin']);
+    if (!authUser) return;
+    if (repository.isDatabaseEnabled()) {
+      const vendorId = await repository.vendorIdForCustomizationField(customizationFieldOptionMatch[1]);
+      if (!vendorId) {
+        sendJson(res, 404, { error: 'Customization field not found' });
+        return;
+      }
+      if (!await authorizeVendorTarget(authUser, vendorId)) {
+        sendJson(res, 403, { error: 'Vendor account cannot manage this customization field' });
+        return;
+      }
+      readJsonBody(req)
+        .then((body) => repository.saveCustomizationFieldOption(customizationFieldOptionMatch[1], body))
+        .then((template) => sendJson(res, 200, template))
+        .catch((error) => sendJson(res, error.statusCode || 400, { error: error.message || 'Invalid JSON body' }));
+      return;
+    }
+    sendJson(res, 409, { error: 'Product customization requires database mode' });
+    return;
+  }
+
+  const customizationOptionMatch = url.pathname.match(/^\/api\/customization-field-options\/([^/]+)$/);
+  if ((req.method === 'POST' || req.method === 'DELETE') && customizationOptionMatch) {
+    const authUser = requireRouteRoles(req, res, ['vendor', 'admin']);
+    if (!authUser) return;
+    if (repository.isDatabaseEnabled()) {
+      const vendorId = await repository.vendorIdForCustomizationOption(customizationOptionMatch[1]);
+      if (!vendorId) {
+        sendJson(res, 404, { error: 'Customization option not found' });
+        return;
+      }
+      if (!await authorizeVendorTarget(authUser, vendorId)) {
+        sendJson(res, 403, { error: 'Vendor account cannot manage this customization option' });
+        return;
+      }
+      if (req.method === 'DELETE') {
+        repository.deleteCustomizationFieldOption(customizationOptionMatch[1])
+          .then((template) => sendJson(res, 200, template))
+          .catch((error) => sendJson(res, error.statusCode || 400, { error: error.message || 'Request failed' }));
+        return;
+      }
+      readJsonBody(req)
+        .then((body) => repository.updateCustomizationFieldOption(customizationOptionMatch[1], body))
+        .then((template) => sendJson(res, 200, template))
+        .catch((error) => sendJson(res, error.statusCode || 400, { error: error.message || 'Invalid JSON body' }));
+      return;
+    }
+    sendJson(res, 409, { error: 'Product customization requires database mode' });
+    return;
+  }
+
+  const customizationFieldPlacementMatch = url.pathname.match(/^\/api\/customization-fields\/([^/]+)\/placements$/);
+  if (req.method === 'POST' && customizationFieldPlacementMatch) {
+    const authUser = requireRouteRoles(req, res, ['vendor', 'admin']);
+    if (!authUser) return;
+    if (repository.isDatabaseEnabled()) {
+      const vendorId = await repository.vendorIdForCustomizationField(customizationFieldPlacementMatch[1]);
+      if (!vendorId) {
+        sendJson(res, 404, { error: 'Customization field not found' });
+        return;
+      }
+      if (!await authorizeVendorTarget(authUser, vendorId)) {
+        sendJson(res, 403, { error: 'Vendor account cannot manage this customization field' });
+        return;
+      }
+      readJsonBody(req)
+        .then((body) => repository.saveCustomizationPlacement(customizationFieldPlacementMatch[1], body))
+        .then((template) => sendJson(res, 200, template))
+        .catch((error) => sendJson(res, error.statusCode || 400, { error: error.message || 'Invalid JSON body' }));
+      return;
+    }
+    sendJson(res, 409, { error: 'Product customization requires database mode' });
+    return;
+  }
+
+  const customizationPlacementMatch = url.pathname.match(/^\/api\/customization-placements\/([^/]+)$/);
+  if ((req.method === 'POST' || req.method === 'DELETE') && customizationPlacementMatch) {
+    const authUser = requireRouteRoles(req, res, ['vendor', 'admin']);
+    if (!authUser) return;
+    if (repository.isDatabaseEnabled()) {
+      const vendorId = await repository.vendorIdForCustomizationPlacement(customizationPlacementMatch[1]);
+      if (!vendorId) {
+        sendJson(res, 404, { error: 'Customization placement not found' });
+        return;
+      }
+      if (!await authorizeVendorTarget(authUser, vendorId)) {
+        sendJson(res, 403, { error: 'Vendor account cannot manage this customization placement' });
+        return;
+      }
+      if (req.method === 'DELETE') {
+        repository.deleteCustomizationPlacement(customizationPlacementMatch[1])
+          .then((template) => sendJson(res, 200, template))
+          .catch((error) => sendJson(res, error.statusCode || 400, { error: error.message || 'Request failed' }));
+        return;
+      }
+      readJsonBody(req)
+        .then((body) => repository.updateCustomizationPlacement(customizationPlacementMatch[1], body))
+        .then((template) => sendJson(res, 200, template))
+        .catch((error) => sendJson(res, error.statusCode || 400, { error: error.message || 'Invalid JSON body' }));
+      return;
+    }
+    sendJson(res, 409, { error: 'Product customization requires database mode' });
+    return;
+  }
+
   const productUpdateMatch = url.pathname.match(/^\/api\/products\/([^/]+)$/);
   if (req.method === 'POST' && productUpdateMatch) {
     const authUser = requireRouteRoles(req, res, ['vendor', 'admin']);
@@ -2033,7 +2473,7 @@ const server = http.createServer(async (req, res) => {
     if (!authUser) return;
     if (repository.isDatabaseEnabled()) {
       readJsonBody(req)
-        .then((body) => repository.updateCartItem(authUser.sub, cartItemUpdateMatch[1], body.qty))
+        .then((body) => repository.updateCartItem(authUser.sub, cartItemUpdateMatch[1], body.qty, body.customizationSignature || body.signature || ''))
         .then((cart) => sendJson(res, 200, cart))
         .catch((error) => sendJson(res, error.statusCode || 400, { error: error.message || 'Invalid JSON body' }));
       return;
@@ -2048,7 +2488,11 @@ const server = http.createServer(async (req, res) => {
     if (!authUser) return;
     if (repository.isDatabaseEnabled()) {
       try {
-        sendJson(res, 200, await repository.removeCartItem(authUser.sub, cartItemRemoveMatch[1]));
+        sendJson(res, 200, await repository.removeCartItem(
+          authUser.sub,
+          cartItemRemoveMatch[1],
+          url.searchParams.get('customizationSignature') || url.searchParams.get('signature') || ''
+        ));
         return;
       } catch (error) {
         sendJson(res, error.statusCode || 500, { error: error.message });
@@ -2208,8 +2652,7 @@ const server = http.createServer(async (req, res) => {
           sendJson(res, 404, { error: 'Uploaded document file is not available' });
           return;
         }
-        const file = await fs.readFile(download.filePath);
-        sendBinary(res, 200, file, download.contentType, {
+        sendBinary(res, 200, download.buffer, download.contentType, {
           'Content-Disposition': `attachment; filename="${download.fileName.replace(/"/g, '')}"`
         });
       } catch (error) {
@@ -2406,6 +2849,42 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  const productionSheetMatch = url.pathname.match(/^\/api\/orders\/([^/]+)\/production-sheet$/);
+  if (req.method === 'GET' && productionSheetMatch) {
+    const authUser = requireRouteRoles(req, res, ['vendor', 'admin']);
+    if (!authUser) return;
+    if (repository.isDatabaseEnabled()) {
+      try {
+        const order = await repository.findOrderById(productionSheetMatch[1], null);
+        if (!order) {
+          sendJson(res, 404, { error: 'Order not found' });
+          return;
+        }
+        let vendorId = url.searchParams.get('vendorId') || null;
+        if (authUser.role === 'vendor') {
+          const vendorIds = await repository.vendorIdsForUser(authUser.sub);
+          vendorId = vendorId && vendorIds.includes(vendorId) ? vendorId : vendorIds.find((id) => order.items.some((item) => item.vendorId === id)) || null;
+          if (!vendorId) {
+            sendJson(res, 403, { error: 'Vendor account cannot access this production sheet' });
+            return;
+          }
+        }
+        const lines = createProductionSheetLines(order, vendorId);
+        res.writeHead(200, {
+          'Access-Control-Allow-Origin': frontendOrigin,
+          'Content-Type': 'text/plain',
+          'Content-Disposition': `attachment; filename="production-${order.orderId}.txt"`
+        });
+        res.end(lines.join('\n'));
+        return;
+      } catch (error) {
+        return sendRouteError(res, error);
+      }
+    }
+    sendJson(res, 409, { error: 'Production sheets require database mode' });
+    return;
+  }
+
   const orderReceivedMatch = url.pathname.match(/^\/api\/orders\/([^/]+)\/confirm-received$/);
   if (req.method === 'POST' && orderReceivedMatch) {
     const authUser = requireRouteRoles(req, res, ['customer', 'admin']);
@@ -2464,7 +2943,10 @@ const server = http.createServer(async (req, res) => {
               sendJson(res, 403, { error: 'Vendor account cannot manage this order' });
               return;
             }
-            const order = await repository.updateOrderFulfillment(orderStatusMatch[1], vendorId, body.fulfillmentStatus || body.status);
+            const order = await repository.updateOrderFulfillment(orderStatusMatch[1], vendorId, body.fulfillmentStatus || body.status, body.orderItemId || null, {
+              actorUserId: authUser.sub,
+              actorRole: authUser.role
+            });
             sendJson(res, 200, order);
             return;
           }
@@ -2665,8 +3147,8 @@ function startComplianceAutomation() {
   const interval = setInterval(run, config.complianceAutomationIntervalMinutes * 60 * 1000);
   if (typeof interval.unref === 'function') {
     interval.unref();
+    }
   }
-}
 
 server.listen(port, () => {
   logger.info(`Urban Market JA API listening on http://localhost:${port}`, { port, dataMode: databaseMode() });

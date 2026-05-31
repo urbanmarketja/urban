@@ -79,6 +79,76 @@ export interface ProductImage {
   sortOrder?: number;
 }
 
+export interface ProductCustomizationOption {
+  id?: string;
+  optionValue: string;
+  label: string;
+  swatchColor?: string | null;
+  priceDeltaJmd?: number;
+  status?: string;
+  sortOrder?: number;
+}
+
+export interface ProductCustomizationPlacement {
+  id?: string;
+  fieldId?: string;
+  surfaceId: string;
+  xPercent: number;
+  yPercent: number;
+  widthPercent: number;
+  heightPercent: number;
+  rotationDegrees?: number;
+  fontFamily?: string | null;
+  fontSizePercent?: number | null;
+  fontWeight?: string | null;
+  textAlign?: string;
+  textColor?: string | null;
+  backgroundColor?: string | null;
+  zIndex?: number;
+}
+
+export interface ProductCustomizationField {
+  id: string;
+  fieldKey: string;
+  label: string;
+  fieldType: 'text' | 'number' | 'color' | 'select' | 'checkbox' | 'image' | string;
+  placeholder?: string;
+  helpText?: string;
+  isRequired?: boolean;
+  defaultValue?: string | null;
+  minLength?: number | null;
+  maxLength?: number | null;
+  minValue?: number | null;
+  maxValue?: number | null;
+  priceDeltaJmd?: number;
+  status?: string;
+  sortOrder?: number;
+  options?: ProductCustomizationOption[];
+  placements?: ProductCustomizationPlacement[];
+}
+
+export interface ProductCustomizationSurface {
+  id: string;
+  name: string;
+  surfaceKey: string;
+  baseImageUrl: string;
+  widthPx?: number | null;
+  heightPx?: number | null;
+  sortOrder?: number;
+}
+
+export interface ProductCustomizationTemplate {
+  id?: string;
+  productId: string;
+  productType?: string;
+  title?: string;
+  instructions?: string;
+  previewMode?: string;
+  status?: string;
+  surfaces?: ProductCustomizationSurface[];
+  fields?: ProductCustomizationField[];
+}
+
 export interface Product {
   id: string;
   name: string;
@@ -101,6 +171,8 @@ export interface Product {
   discountNames?: string;
   imageUrl?: string;
   images?: ProductImage[];
+  isCustomizable?: boolean;
+  customizationTemplate?: ProductCustomizationTemplate | null;
   isFeatured?: boolean;
   featuredUntil?: string | null;
 }

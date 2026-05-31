@@ -3,7 +3,7 @@ import { FormsModule } from '@angular/forms';
 import { Router, RouterLink } from '@angular/router';
 import { apiUrl } from './api-url';
 import { AuthService } from './auth.service';
-import { CartService } from './cart.service';
+import { CartItem, CartService } from './cart.service';
 import { DiscountSummary, discountLabelFor, formatCurrency, hasDiscountPrice } from './market-data';
 
 interface OrderResponse {
@@ -39,13 +39,19 @@ interface DeliveryDetails {
 }
 
 interface InvoiceItem {
+  productId?: string;
   name: string;
   vendorName?: string;
+  vendorSlug?: string;
   storeName?: string;
   price: number;
   originalPrice?: number;
   discount?: DiscountSummary | null;
   qty: number;
+  customizationSummary?: string | string[];
+  customizationAddOnTotal?: number;
+  customizationPreviews?: unknown[];
+  customizations?: unknown[];
 }
 
 @Component({
@@ -69,8 +75,13 @@ interface InvoiceItem {
             <a class="button primary-button" routerLink="/marketplace">Browse marketplace</a>
           } @else {
             <ul class="cart-items">
-              @for (item of cart.items(); track item.productId) {
+              @for (item of cart.items(); track cart.itemKey(item)) {
                 <li class="cart-item">
+                  @if (customizationPreviewImage(item)) {
+                    <div class="cart-custom-preview">
+                      <img [src]="customizationPreviewImage(item)" [alt]="item.name + ' customization preview'" loading="lazy" decoding="async">
+                    </div>
+                  }
                   <div class="cart-item-info">
                     @if (item.vendorSlug) {
                       <a class="product-name-link" [routerLink]="['/vendor', item.vendorSlug, 'product', item.productId]">{{ item.name }}</a>
@@ -80,6 +91,12 @@ interface InvoiceItem {
                     <span>{{ item.vendorName }} - Qty {{ item.qty }}</span>
                     @if (hasDiscount(item)) {
                       <span class="product-meta">Discount applied: {{ discountLabel(item) }}</span>
+                    }
+                    @if (customizationSummary(item)) {
+                      <span class="product-meta">Custom: {{ customizationSummary(item) }}</span>
+                    }
+                    @if (item.customizationAddOnTotal) {
+                      <span class="product-meta">Customization add-ons: {{ money(item.customizationAddOnTotal) }}</span>
                     }
                   </div>
                   <div class="price-block line-price">
@@ -157,12 +174,19 @@ interface InvoiceItem {
             <div class="notice error">{{ errorMessage() }}</div>
           }
 
+          @if (cartHasCustomizations()) {
+            <label class="checkbox-line customer-confirmation checkout-custom-approval">
+              <input type="checkbox" name="customizationReviewed" [(ngModel)]="customizationReviewed">
+              I have reviewed the customization details and approve them for this order.
+            </label>
+          }
+
           <div class="checkout-actions">
             <button class="button secondary-button" type="button" [disabled]="cart.items().length === 0 && !order()" (click)="downloadInvoice()">Generate invoice</button>
             @if (canConfirmPayment()) {
               <button class="button primary-button" type="button" [disabled]="isConfirming()" (click)="confirmPayment()">{{ isConfirming() ? 'Confirming...' : 'Confirm internal payment' }}</button>
             } @else {
-              <button class="button primary-button" type="submit" [disabled]="cart.items().length === 0 || isPlacing() || !!order()">{{ isPlacing() ? 'Placing...' : 'Place order' }}</button>
+              <button class="button primary-button" type="submit" [disabled]="cart.items().length === 0 || isPlacing() || !!order() || (cartHasCustomizations() && !customizationReviewed)">{{ isPlacing() ? 'Placing...' : 'Place order' }}</button>
             }
           </div>
         </form>
@@ -182,6 +206,7 @@ export class CheckoutPage implements OnInit {
   protected readonly errorMessage = signal('');
   protected readonly order = signal<OrderResponse | null>(null);
   protected paymentMethod = 'Dime';
+  protected customizationReviewed = false;
 
   protected delivery: DeliveryDetails = {
     name: '',
@@ -205,11 +230,17 @@ export class CheckoutPage implements OnInit {
     if (this.cart.items().length === 0) {
       return;
     }
+    if (this.cartHasCustomizations() && !this.customizationReviewed) {
+      this.errorMessage.set('Review and approve the customization details before placing this order.');
+      return;
+    }
 
     this.isPlacing.set(true);
     this.errorMessage.set('');
 
     try {
+      await this.cart.syncLocalCartToAccount();
+
       await fetch(apiUrl('/api/customer/addresses'), {
         method: 'POST',
         headers: this.auth.authHeaders(),
@@ -263,6 +294,27 @@ export class CheckoutPage implements OnInit {
   protected paymentStatusLabel(): string {
     const order = this.order();
     return order?.paymentSessionStatus || order?.paymentStatus || order?.paymentSession?.status || 'Not started';
+  }
+
+  protected customizationSummary(item: Partial<CartItem> | InvoiceItem): string {
+    const summary = item.customizationSummary;
+    if (Array.isArray(summary)) return summary.filter(Boolean).join(', ');
+    if (summary) return String(summary);
+    const rows = Array.isArray(item.customizations) ? item.customizations : [];
+    return rows
+      .map((row: any) => `${row.fieldLabel || row.fieldKey}: ${row.valueText || ''}`)
+      .filter(Boolean)
+      .join(', ');
+  }
+
+  protected customizationPreviewImage(item: Partial<CartItem> | InvoiceItem): string {
+    const preview = this.firstCustomizationPreview(item);
+    const json = preview?.previewJson || {};
+    return String(preview?.previewImageUrl || json.baseImageUrl || json.imageUrl || json.url || '');
+  }
+
+  protected cartHasCustomizations(): boolean {
+    return this.cart.items().some((item) => Boolean(item.customizationSignature || item.customizationSummary || (item.customizations || []).length));
   }
 
   protected async confirmPayment(): Promise<void> {
@@ -343,7 +395,10 @@ export class CheckoutPage implements OnInit {
     const storeSections = stores.map((store) => {
       const rows = store.items.map((item) => `
         <tr>
-          <td>${this.escapeHtml(item.name)}</td>
+          <td>
+            ${this.escapeHtml(item.name)}
+            ${this.invoiceCustomizationHtml(item)}
+          </td>
           <td>${item.qty}</td>
           <td>${this.invoicePriceHtml(item.price, item.originalPrice)}</td>
           <td>${this.invoicePriceHtml(item.price * item.qty, (item.originalPrice ?? item.price) * item.qty)}</td>
@@ -402,6 +457,8 @@ export class CheckoutPage implements OnInit {
     .invoice-price { display: grid; gap: 2px; }
     .invoice-old-price { color: #7d7669; font-size: 12px; text-decoration: line-through; }
     .invoice-sale-price { color: #f47a1f; font-weight: 800; }
+    .customization-note { color: #526158; display: block; font-size: 12px; line-height: 1.5; margin-top: 4px; }
+    .preview-note { color: #7d7669; display: block; font-size: 11px; margin-top: 2px; }
     .total { margin-top: 28px; display: flex; justify-content: flex-end; }
     .total-box { min-width: 260px; border-top: 3px solid #f47a1f; padding-top: 14px; text-align: right; }
     .total-box strong { font-size: 24px; display: block; margin-top: 4px; }
@@ -470,6 +527,30 @@ export class CheckoutPage implements OnInit {
       grouped.set(name, group);
     }
     return [...grouped.values()];
+  }
+
+  private invoiceCustomizationHtml(item: InvoiceItem): string {
+    const summary = this.customizationSummary(item);
+    const preview = this.firstCustomizationPreview(item);
+    const surface = preview?.surfaceKey || preview?.previewJson?.surfaceKey || '';
+    const previewText = surface ? `<span class="preview-note">Preview: ${this.escapeHtml(surface)}</span>` : '';
+    const addOnTotal = Number(item.customizationAddOnTotal || this.customizationAddOnTotalFromRows(item));
+    const addOnText = addOnTotal > 0 ? `<span class="customization-note">Customization add-ons: ${formatCurrency(addOnTotal)}</span>` : '';
+    return [
+      summary ? `<span class="customization-note">Customization: ${this.escapeHtml(summary)}</span>` : '',
+      addOnText,
+      previewText
+    ].join('');
+  }
+
+  private firstCustomizationPreview(item: Partial<CartItem> | InvoiceItem): any | null {
+    const previews = Array.isArray(item.customizationPreviews) ? item.customizationPreviews : [];
+    return previews.find((preview) => preview && typeof preview === 'object') || null;
+  }
+
+  private customizationAddOnTotalFromRows(item: Partial<CartItem> | InvoiceItem): number {
+    const rows = Array.isArray(item.customizations) ? item.customizations : [];
+    return rows.reduce((sum: number, row: any) => sum + Number(row?.priceDeltaJmd || 0), 0);
   }
 
   protected paymentLabel(order?: Partial<OrderResponse>): string {

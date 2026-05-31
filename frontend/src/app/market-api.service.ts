@@ -151,9 +151,26 @@ export class MarketApiService {
   private normalizeProduct(product: Product): Product {
     const price = Number(product.price || 0);
     const originalPrice = Number(product.originalPrice ?? price);
-    const images = (product.images || [])
+    const customizationTemplate = product.customizationTemplate ? this.normalizeCustomizationTemplate(product.customizationTemplate) : null;
+    const productImages = (product.images || [])
       .filter((image) => image?.url)
       .map((image) => ({ ...image, url: this.mediaUrl(image.url), sortOrder: Number(image.sortOrder || 0) }))
+      .sort((a, b) => Number(a.sortOrder || 0) - Number(b.sortOrder || 0));
+    const customizationImages = (customizationTemplate?.surfaces || [])
+      .filter((surface) => surface.baseImageUrl)
+      .map((surface, index) => ({
+        id: `customization-surface-${surface.id || surface.surfaceKey || index}`,
+        url: surface.baseImageUrl,
+        altText: `${product.name} ${surface.name || 'customizer'} view`,
+        sortOrder: 1000 + Number(surface.sortOrder || index)
+      }));
+    const seenImages = new Set<string>();
+    const images = [...productImages, ...customizationImages]
+      .filter((image) => {
+        if (!image.url || seenImages.has(image.url)) return false;
+        seenImages.add(image.url);
+        return true;
+      })
       .sort((a, b) => Number(a.sortOrder || 0) - Number(b.sortOrder || 0));
     return {
       ...product,
@@ -169,7 +186,52 @@ export class MarketApiService {
       description: product.description || 'Available from a local Urban Market JA vendor.',
       stockQuantity: Number(product.stockQuantity ?? 0),
       imageUrl: this.mediaUrl(product.imageUrl) || images[0]?.url || '',
-      images
+      images,
+      isCustomizable: Boolean(product.isCustomizable || customizationTemplate?.fields?.length),
+      customizationTemplate
+    };
+  }
+
+  private normalizeCustomizationTemplate(template: NonNullable<Product['customizationTemplate']>): NonNullable<Product['customizationTemplate']> {
+    return {
+      ...template,
+      surfaces: (template.surfaces || [])
+        .map((surface) => ({
+          ...surface,
+          baseImageUrl: this.mediaUrl(surface.baseImageUrl),
+          widthPx: surface.widthPx === null || surface.widthPx === undefined ? null : Number(surface.widthPx),
+          heightPx: surface.heightPx === null || surface.heightPx === undefined ? null : Number(surface.heightPx),
+          sortOrder: Number(surface.sortOrder || 0)
+        }))
+        .sort((a, b) => Number(a.sortOrder || 0) - Number(b.sortOrder || 0)),
+      fields: (template.fields || [])
+        .map((field) => ({
+          ...field,
+          isRequired: Boolean(field.isRequired),
+          priceDeltaJmd: Number(field.priceDeltaJmd || 0),
+          sortOrder: Number(field.sortOrder || 0),
+          options: (field.options || [])
+            .map((option) => ({
+              ...option,
+              priceDeltaJmd: Number(option.priceDeltaJmd || 0),
+              sortOrder: Number(option.sortOrder || 0)
+            }))
+            .sort((a, b) => Number(a.sortOrder || 0) - Number(b.sortOrder || 0)),
+          placements: (field.placements || [])
+            .map((placement) => ({
+              ...placement,
+              xPercent: Number(placement.xPercent ?? 50),
+              yPercent: Number(placement.yPercent ?? 50),
+              widthPercent: Number(placement.widthPercent ?? 30),
+              heightPercent: Number(placement.heightPercent ?? 10),
+              rotationDegrees: Number(placement.rotationDegrees || 0),
+              fontSizePercent: placement.fontSizePercent === null || placement.fontSizePercent === undefined ? null : Number(placement.fontSizePercent),
+              zIndex: Number(placement.zIndex || 1)
+            }))
+            .sort((a, b) => Number(a.zIndex || 1) - Number(b.zIndex || 1))
+        }))
+        .filter((field) => field.status !== 'hidden')
+        .sort((a, b) => Number(a.sortOrder || 0) - Number(b.sortOrder || 0))
     };
   }
 
@@ -245,13 +307,27 @@ export class MarketApiService {
   }
 
   private mediaUrl(value?: string): string {
-    if (!value) return '';
-    if (/^(https?:|data:|blob:)/i.test(value)) return value;
-    const path = value.startsWith('/api/')
-      ? value
-      : value.startsWith('uploads/')
-        ? `/api/${value}`
-        : value;
+    const text = String(value || '').trim();
+    if (!text) return '';
+    if (/^(data:|blob:)/i.test(text)) return text;
+    if (/^https?:\/\//i.test(text)) {
+      try {
+        const parsed = new URL(text);
+        if (parsed.pathname.startsWith('/uploads/')) {
+          return apiUrl(`/api${parsed.pathname}${parsed.search}`);
+        }
+      } catch {
+        return text;
+      }
+      return text;
+    }
+    const path = text.startsWith('/api/')
+      ? text
+      : text.startsWith('/uploads/')
+        ? `/api${text}`
+        : text.startsWith('uploads/')
+          ? `/api/${text}`
+          : text;
     return path.startsWith('/api/') ? apiUrl(path) : path;
   }
 }

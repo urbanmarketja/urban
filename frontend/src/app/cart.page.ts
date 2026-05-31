@@ -1,6 +1,6 @@
 import { Component, OnInit, inject } from '@angular/core';
 import { RouterLink } from '@angular/router';
-import { CartService } from './cart.service';
+import { CartItem, CartService } from './cart.service';
 import { discountLabelFor, formatCurrency, hasDiscountPrice } from './market-data';
 
 @Component({
@@ -26,23 +26,37 @@ import { discountLabelFor, formatCurrency, hasDiscountPrice } from './market-dat
             <a class="button primary-button" routerLink="/marketplace">Browse marketplace</a>
           } @else {
             <ul class="cart-items">
-              @for (item of cart.items(); track item.productId) {
+              @for (item of cart.items(); track cart.itemKey(item)) {
                 <li class="cart-item">
+                  @if (customizationPreviewImage(item)) {
+                    <div class="cart-custom-preview">
+                      <img [src]="customizationPreviewImage(item)" [alt]="item.name + ' customization preview'" loading="lazy" decoding="async">
+                    </div>
+                  }
                   <div class="cart-item-info">
                     @if (item.vendorSlug) {
                       <a class="product-name-link" [routerLink]="['/vendor', item.vendorSlug, 'product', item.productId]">{{ item.name }}</a>
                     } @else {
                       <strong>{{ item.name }}</strong>
                     }
-                    <span>{{ item.vendorName }} · {{ item.deliveryDay }} delivery</span>
+                    <span>{{ item.vendorName }} - {{ item.deliveryDay }} delivery</span>
                     @if (hasDiscount(item)) {
                       <span class="product-meta">Discount applied: {{ discountLabel(item) }}</span>
                     }
+                    @if (item.customizationSummary) {
+                      <span class="product-meta">Custom: {{ item.customizationSummary }}</span>
+                    }
+                    @if (item.customizationAddOnTotal) {
+                      <span class="product-meta">Customization add-ons: {{ money(item.customizationAddOnTotal) }}</span>
+                    }
+                    @if (item.customizationSignature && item.vendorSlug) {
+                      <a class="button-sm secondary-button cart-edit-link" [routerLink]="['/vendor', item.vendorSlug, 'product', item.productId]" [queryParams]="{ editCart: item.customizationSignature }">Edit customization</a>
+                    }
                   </div>
                   <div class="quantity-control">
-                    <button type="button" (click)="cart.updateQty(item.productId, item.qty - 1)">-</button>
+                    <button type="button" (click)="cart.updateQty(item.productId, item.qty - 1, item.customizationSignature || '')">-</button>
                     <span>{{ item.qty }}</span>
-                    <button type="button" (click)="cart.updateQty(item.productId, item.qty + 1)">+</button>
+                    <button type="button" (click)="cart.updateQty(item.productId, item.qty + 1, item.customizationSignature || '')">+</button>
                   </div>
                   <div class="price-block line-price">
                     @if (hasDiscount(item)) {
@@ -50,7 +64,7 @@ import { discountLabelFor, formatCurrency, hasDiscountPrice } from './market-dat
                     }
                     <strong [class.discount-price]="hasDiscount(item)">{{ money(item.price * item.qty) }}</strong>
                   </div>
-                  <button class="button-sm danger" type="button" (click)="cart.remove(item.productId)">Remove</button>
+                  <button class="button-sm danger" type="button" (click)="cart.remove(item.productId, item.customizationSignature || '')">Remove</button>
                 </li>
               }
             </ul>
@@ -76,5 +90,16 @@ export class CartPage implements OnInit {
 
   ngOnInit(): void {
     void this.cart.syncLocalCartToAccount();
+  }
+
+  protected customizationPreviewImage(item: CartItem): string {
+    const preview = this.firstCustomizationPreview(item);
+    const json = preview?.previewJson || {};
+    return String(preview?.previewImageUrl || json.baseImageUrl || json.imageUrl || json.url || '');
+  }
+
+  private firstCustomizationPreview(item: CartItem): any | null {
+    const previews = Array.isArray(item.customizationPreviews) ? item.customizationPreviews : [];
+    return previews.find((preview) => preview && typeof preview === 'object') || null;
   }
 }

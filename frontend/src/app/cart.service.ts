@@ -1,7 +1,7 @@
 import { Injectable, computed, inject, signal } from '@angular/core';
 import { apiUrl } from './api-url';
 import { AuthService } from './auth.service';
-import { DiscountSummary, Product } from './market-data';
+import { DiscountSummary, Product, formatCurrency } from './market-data';
 
 export interface CartItem {
   productId: string;
@@ -14,6 +14,22 @@ export interface CartItem {
   discount?: DiscountSummary | null;
   deliveryDay: string;
   qty: number;
+  customizationSignature?: string;
+  customizationSummary?: string;
+  customizationAddOnTotal?: number;
+  customizations?: unknown[];
+  customizationPreviews?: unknown[];
+}
+
+export interface CartCustomizationAdd {
+  customizations?: Record<string, unknown> | unknown[];
+  previews?: unknown[];
+  validation?: {
+    customizationSignature?: string;
+    customizations?: unknown[];
+    previews?: unknown[];
+    addOnTotalJmd?: number;
+  };
 }
 
 const CART_KEY = 'urbanMarketCart';
@@ -36,10 +52,12 @@ export class CartService {
     }
   }
 
-  async addProduct(product: Product): Promise<void> {
+  async addProduct(product: Product, customization?: CartCustomizationAdd): Promise<void> {
     const previous = [...this.itemsSignal()];
     const next = [...this.itemsSignal()];
-    const existing = next.find((item) => item.productId === product.id);
+    const signature = customization?.validation?.customizationSignature || '';
+    const addOnTotal = Number(customization?.validation?.addOnTotalJmd || 0);
+    const existing = next.find((item) => item.productId === product.id && (item.customizationSignature || '') === signature);
 
     if (existing) {
       existing.qty += 1;
@@ -50,36 +68,47 @@ export class CartService {
         vendorId: product.vendorId,
         vendorName: product.vendorName ?? 'Local vendor',
         vendorSlug: product.vendorSlug || product.storeSlug,
-        price: product.price,
-        originalPrice: product.originalPrice ?? product.price,
+        price: product.price + addOnTotal,
+        originalPrice: (product.originalPrice ?? product.price) + addOnTotal,
         discount: product.discount ?? null,
         deliveryDay: product.deliveryDay,
-        qty: 1
+        qty: 1,
+        customizationSignature: signature,
+        customizationSummary: this.customizationSummary(customization),
+        customizationAddOnTotal: addOnTotal,
+        customizations: customization?.validation?.customizations || [],
+        customizationPreviews: customization?.validation?.previews || customization?.previews || []
       });
     }
 
     this.saveCart(next);
     if (this.shouldSync()) {
-      const ok = await this.post('/api/cart/items', { productId: product.id, qty: 1 });
+      const ok = await this.post('/api/cart/items', {
+        productId: product.id,
+        qty: 1,
+        customizations: customization?.customizations || {},
+        previews: customization?.previews || []
+      });
       if (!ok) this.saveCart(previous);
     }
   }
 
-  async updateQty(productId: string, qty: number): Promise<void> {
+  async updateQty(productId: string, qty: number, customizationSignature = ''): Promise<void> {
     const previous = [...this.itemsSignal()];
     const normalizedQty = Math.max(1, Math.floor(qty || 1));
-    this.saveCart(this.itemsSignal().map((item) => item.productId === productId ? { ...item, qty: normalizedQty } : item));
+    this.saveCart(this.itemsSignal().map((item) => item.productId === productId && (item.customizationSignature || '') === customizationSignature ? { ...item, qty: normalizedQty } : item));
     if (this.shouldSync()) {
-      const ok = await this.post(`/api/cart/items/${productId}`, { qty: normalizedQty });
+      const ok = await this.post(`/api/cart/items/${productId}`, { qty: normalizedQty, customizationSignature });
       if (!ok) this.saveCart(previous);
     }
   }
 
-  async remove(productId: string): Promise<void> {
+  async remove(productId: string, customizationSignature = ''): Promise<void> {
     const previous = [...this.itemsSignal()];
-    this.saveCart(this.itemsSignal().filter((item) => item.productId !== productId));
+    this.saveCart(this.itemsSignal().filter((item) => !(item.productId === productId && (item.customizationSignature || '') === customizationSignature)));
     if (this.shouldSync()) {
-      const ok = await this.post(`/api/cart/items/${productId}/remove`, {});
+      const suffix = customizationSignature ? `?customizationSignature=${encodeURIComponent(customizationSignature)}` : '';
+      const ok = await this.post(`/api/cart/items/${productId}/remove${suffix}`, {});
       if (!ok) this.saveCart(previous);
     }
   }
@@ -103,7 +132,12 @@ export class CartService {
 
     const localItems = [...this.itemsSignal()];
     for (const item of localItems) {
-      await this.post('/api/cart/items', { productId: item.productId, qty: item.qty });
+      await this.post('/api/cart/items', {
+        productId: item.productId,
+        qty: item.qty,
+        customizations: item.customizations || {},
+        previews: item.customizationPreviews || []
+      });
     }
     if (typeof localStorage !== 'undefined') {
       localStorage.setItem(CART_SYNC_USER_KEY, user.id);
@@ -145,6 +179,23 @@ export class CartService {
     if (typeof localStorage !== 'undefined') {
       localStorage.setItem(CART_KEY, JSON.stringify(items));
     }
+  }
+
+  itemKey(item: CartItem): string {
+    return `${item.productId}:${item.customizationSignature || ''}`;
+  }
+
+  private customizationSummary(customization?: CartCustomizationAdd): string {
+    const rows = customization?.validation?.customizations || [];
+    if (!Array.isArray(rows) || !rows.length) return '';
+    return rows
+      .map((row: any) => {
+        const amount = Number(row.priceDeltaJmd || 0);
+        const suffix = amount > 0 ? ` (+${formatCurrency(amount)})` : '';
+        return `${row.fieldLabel || row.fieldKey}: ${row.valueText || ''}${suffix}`;
+      })
+      .filter(Boolean)
+      .join(', ');
   }
 
   private shouldSync(): boolean {

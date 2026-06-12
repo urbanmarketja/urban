@@ -11,9 +11,9 @@ import { discountLabelFor, formatCurrency, hasDiscountPrice } from './market-dat
     <main>
       <section class="hero-section container">
         <div class="hero-copy">
-          <p class="eyebrow">The Market Square</p>
-          <h1>Local commerce, organized for shoppers and sellers.</h1>
-          <p class="hero-text">Shop products, book services, discover food vendors, and manage orders from one marketplace built for Jamaica's independent businesses.</p>
+          <p class="eyebrow">Urban Market JA</p>
+          <h1>Shop, sell, book, and deliver across Jamaica.</h1>
+          <p class="hero-text">A practical marketplace for local products, food vendors, service providers, jobs, storefronts, orders, invoices, and vendor payouts.</p>
           <div class="hero-actions">
             <a class="button primary-button" routerLink="/marketplace">Browse marketplace</a>
             <a class="button secondary-button" routerLink="/signup">Open a vendor account</a>
@@ -23,7 +23,7 @@ import { discountLabelFor, formatCurrency, hasDiscountPrice } from './market-dat
           <article class="hero-store-card">
             <span class="product-tag">Marketplace live</span>
             <h2>Urban Market JA</h2>
-            <p>Products, foods, services, jobs, vendor wallets, and storefront sharing in one operating system.</p>
+            <p>One storefront system for customers, vendors, admins, subscriptions, Market Credits, and order fulfillment.</p>
           </article>
           <article><strong>{{ vendors().length }}+</strong><span>Featured vendor stores</span></article>
           <article><strong>24/7</strong><span>Cart, alerts, invoices, and dashboards</span></article>
@@ -32,8 +32,8 @@ import { discountLabelFor, formatCurrency, hasDiscountPrice } from './market-dat
 
       <section class="container section category-tiles">
         <div class="section-heading">
-          <h2>Entry points</h2>
-          <p>Choose your door into Urban Market JA.</p>
+          <h2>Start here</h2>
+          <p>Move straight into shopping, booking, food ordering, or job opportunities.</p>
         </div>
         <div class="tiles-grid">
           <a routerLink="/marketplace" class="tile-card tile-market">

@@ -46,6 +46,14 @@ interface CustomerAddress {
             </div>
             <p>{{ store.summary }}</p>
             <p class="vendor-meta">{{ store.rating }} star - {{ storeAddressLabel() }} - Delivery {{ store.deliveryDays.join(' / ') }}</p>
+            <div class="store-hero-shortcuts" aria-label="Store shortcuts">
+              <button type="button" (click)="scrollToStoreSection('store-products', $event)">Shop</button>
+              @if (storeGallery(store).length) {
+                <button type="button" (click)="scrollToStoreSection('store-gallery', $event)">Gallery</button>
+              }
+              <button type="button" (click)="scrollToStoreSection('store-location', $event); locationDetailsOpen.set(true)">Location</button>
+              <button type="button" (click)="openShareShortcuts($event)">Share</button>
+            </div>
           </div>
         </section>
 
@@ -81,13 +89,31 @@ interface CustomerAddress {
                 <button
                   class="button secondary-button"
                   type="button"
-                  [attr.aria-expanded]="shareDetailsOpen()"
-                  (click)="toggleShareDetails()"
+                  (click)="openShareShortcuts($event)"
                 >
-                  {{ shareDetailsOpen() ? 'Hide share options' : 'Share store' }}
+                  Share store
                 </button>
               </div>
-              @if (shareDetailsOpen()) {
+            </div>
+          </article>
+
+          @if (shareDetailsOpen()) {
+            <div class="store-share-modal-backdrop" role="presentation" (click)="closeSharePopup()">
+              <section
+                class="store-share-modal"
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="store-share-title"
+                (click)="$event.stopPropagation()"
+              >
+                <div class="store-share-modal-header">
+                  <div>
+                    <span class="product-tag">Share store</span>
+                    <h2 id="store-share-title">{{ store.name }}</h2>
+                  </div>
+                  <button class="icon-button" type="button" aria-label="Close share popup" (click)="closeSharePopup()">x</button>
+                </div>
+                <p>Send this storefront, scan it on another device, or follow {{ store.name }} online.</p>
                 <div class="store-action-details">
                   <div class="share-actions">
                     <button class="button secondary-button" type="button" (click)="copyStoreLink()">{{ copyLabel() }}</button>
@@ -112,11 +138,11 @@ interface CustomerAddress {
                     </div>
                   }
                 </div>
-              }
+              </section>
             </div>
-          </article>
+          }
 
-          <article class="dashboard-card store-map-card">
+          <article id="store-location" class="dashboard-card store-map-card">
             <div class="store-card-header">
               <div>
                 <span class="product-tag">Location</span>
@@ -158,7 +184,7 @@ interface CustomerAddress {
         </section>
 
         @if (storeGallery(store).length) {
-          <section class="container section store-gallery-section">
+          <section id="store-gallery" class="container section store-gallery-section">
             <div class="section-heading">
               <h2>Store gallery</h2>
               <p>Photos shared by {{ store.name }}.</p>
@@ -173,7 +199,7 @@ interface CustomerAddress {
           </section>
         }
 
-        <section class="container section">
+        <section id="store-products" class="container section">
           <div class="section-heading">
             <h2>Shop {{ store.name }}</h2>
             <p>Browse available goods from this store and add items to your cart.</p>
@@ -414,6 +440,23 @@ export class VendorStorePage implements OnInit {
 
   protected toggleLocationDetails(): void {
     this.locationDetailsOpen.update((isOpen) => !isOpen);
+  }
+
+  protected scrollToStoreSection(id: string, event?: Event): void {
+    event?.preventDefault();
+    event?.stopPropagation();
+    if (typeof document === 'undefined') return;
+    document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+
+  protected openShareShortcuts(event?: Event): void {
+    event?.preventDefault();
+    event?.stopPropagation();
+    this.shareDetailsOpen.set(true);
+  }
+
+  protected closeSharePopup(): void {
+    this.shareDetailsOpen.set(false);
   }
 
   private async loadCustomerAddresses(): Promise<void> {

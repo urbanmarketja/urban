@@ -38,6 +38,56 @@ const CUSTOMIZATION_FIELD_TYPES = new Set(['text', 'number', 'color', 'select', 
 const CUSTOMIZATION_TEMPLATE_STATUSES = new Set(['draft', 'active', 'paused']);
 const CUSTOMIZATION_FIELD_STATUSES = new Set(['active', 'hidden']);
 const CUSTOMIZATION_TEXT_ALIGNMENTS = new Set(['left', 'center', 'right']);
+const STORE_THEME_COLUMNS = {
+  theme_key: { defaultSql: "'street'" },
+  theme_primary_color: { defaultSql: 'NULL' },
+  theme_accent_color: { defaultSql: 'NULL' },
+  theme_background_color: { defaultSql: 'NULL' }
+};
+const schemaColumnCache = new Map();
+
+async function tableColumnExists(tableName, columnName) {
+  const key = `${tableName}.${columnName}`;
+  if (schemaColumnCache.has(key)) return schemaColumnCache.get(key);
+  const rows = await query(`
+    SELECT COUNT(*) AS total
+    FROM information_schema.columns
+    WHERE table_schema = DATABASE()
+      AND table_name = :tableName
+      AND column_name = :columnName
+  `, { tableName, columnName });
+  const exists = Number(rows[0]?.total || 0) > 0;
+  schemaColumnCache.set(key, exists);
+  return exists;
+}
+
+async function storeThemeSelect(alias, fields) {
+  const parts = [];
+  for (const [columnName, outputName] of Object.entries(fields)) {
+    const exists = await tableColumnExists('stores', columnName);
+    const expression = exists ? `${alias}.${columnName}` : STORE_THEME_COLUMNS[columnName].defaultSql;
+    parts.push(`${expression} AS ${outputName}`);
+  }
+  return parts.join(',\n      ');
+}
+
+async function storeThemeAssignments(body, store) {
+  const fields = [
+    ['theme_key', 'themeKey', storeThemeKey(body.themeKey ?? store.themeKey)],
+    ['theme_primary_color', 'themePrimaryColor', storeThemeColor(body.themePrimaryColor ?? store.themePrimaryColor)],
+    ['theme_accent_color', 'themeAccentColor', storeThemeColor(body.themeAccentColor ?? store.themeAccentColor)],
+    ['theme_background_color', 'themeBackgroundColor', storeThemeColor(body.themeBackgroundColor ?? store.themeBackgroundColor)]
+  ];
+  const assignments = [];
+  const params = {};
+  for (const [columnName, paramName, value] of fields) {
+    if (await tableColumnExists('stores', columnName)) {
+      assignments.push(`${columnName} = :${paramName}`);
+      params[paramName] = value;
+    }
+  }
+  return { assignments, params };
+}
 
 function latestVendorSubscriptionJoin(alias = 'sub') {
   return `
@@ -1002,6 +1052,12 @@ async function listVendors(activeOnly = true, registeredOnly = false) {
     registeredOnly ? "sub.status = 'active'" : '',
     registeredOnly ? "COALESCE(plan.code, 'starter') <> 'starter'" : ''
   ].filter(Boolean);
+  const themeSelect = await storeThemeSelect('st', {
+    theme_key: 'themeKey',
+    theme_primary_color: 'themePrimaryColor',
+    theme_accent_color: 'themeAccentColor',
+    theme_background_color: 'themeBackgroundColor'
+  });
   const rows = await query(`
     SELECT
       v.id,
@@ -1013,10 +1069,7 @@ async function listVendors(activeOnly = true, registeredOnly = false) {
       st.parish,
       st.latitude,
       st.longitude,
-      st.theme_key AS themeKey,
-      st.theme_primary_color AS themePrimaryColor,
-      st.theme_accent_color AS themeAccentColor,
-      st.theme_background_color AS themeBackgroundColor,
+      ${themeSelect},
       st.rating,
       st.summary,
       store_media_primary.logoUrl,
@@ -1084,6 +1137,12 @@ async function findPublicVendorBySlug(slug) {
 }
 
 async function listProducts() {
+  const themeSelect = await storeThemeSelect('st', {
+    theme_key: 'storeTheme',
+    theme_primary_color: 'storeThemePrimaryColor',
+    theme_accent_color: 'storeThemeAccentColor',
+    theme_background_color: 'storeThemeBackgroundColor'
+  });
   const rows = await query(`
     SELECT
       p.id,
@@ -1093,10 +1152,7 @@ async function listProducts() {
       v.business_name AS vendorName,
       st.slug AS storeSlug,
       st.name AS storeName,
-      st.theme_key AS storeTheme,
-      st.theme_primary_color AS storeThemePrimaryColor,
-      st.theme_accent_color AS storeThemeAccentColor,
-      st.theme_background_color AS storeThemeBackgroundColor,
+      ${themeSelect},
       p.type AS category,
       p.price_jmd AS price,
       p.stock_quantity AS stockQuantity,
@@ -1148,6 +1204,12 @@ async function listProducts() {
 }
 
 async function findPublicProductById(productId) {
+  const themeSelect = await storeThemeSelect('st', {
+    theme_key: 'storeTheme',
+    theme_primary_color: 'storeThemePrimaryColor',
+    theme_accent_color: 'storeThemeAccentColor',
+    theme_background_color: 'storeThemeBackgroundColor'
+  });
   const rows = await query(`
     SELECT
       p.id,
@@ -1157,10 +1219,7 @@ async function findPublicProductById(productId) {
       v.business_name AS vendorName,
       st.slug AS storeSlug,
       st.name AS storeName,
-      st.theme_key AS storeTheme,
-      st.theme_primary_color AS storeThemePrimaryColor,
-      st.theme_accent_color AS storeThemeAccentColor,
-      st.theme_background_color AS storeThemeBackgroundColor,
+      ${themeSelect},
       p.type AS category,
       p.price_jmd AS price,
       p.stock_quantity AS stockQuantity,
@@ -5358,29 +5417,32 @@ async function customizationMediaDownload(fileName) {
 }
 
 async function storeByVendorId(vendorId) {
+  const themeSelect = await storeThemeSelect('s', {
+    theme_key: 'themeKey',
+    theme_primary_color: 'themePrimaryColor',
+    theme_accent_color: 'themeAccentColor',
+    theme_background_color: 'themeBackgroundColor'
+  });
   const rows = await query(`
     SELECT
-      id,
-      vendor_id AS vendorId,
-      name,
-      slug,
-      summary,
-      location,
-      address_line_1 AS addressLine1,
-      address_line_2 AS addressLine2,
-      parish,
-      latitude,
-      longitude,
-      theme_key AS themeKey,
-      theme_primary_color AS themePrimaryColor,
-      theme_accent_color AS themeAccentColor,
-      theme_background_color AS themeBackgroundColor,
-      status,
-      rating,
-      share_token AS shareToken
-    FROM stores
-    WHERE vendor_id = :vendorId
-    ORDER BY created_at
+      s.id,
+      s.vendor_id AS vendorId,
+      s.name,
+      s.slug,
+      s.summary,
+      s.location,
+      s.address_line_1 AS addressLine1,
+      s.address_line_2 AS addressLine2,
+      s.parish,
+      s.latitude,
+      s.longitude,
+      ${themeSelect},
+      s.status,
+      s.rating,
+      s.share_token AS shareToken
+    FROM stores s
+    WHERE s.vendor_id = :vendorId
+    ORDER BY s.created_at
     LIMIT 1
   `, { vendorId });
   const store = rows[0] || null;
@@ -5640,6 +5702,7 @@ async function updateStore(vendorId, body) {
   const name = String(body.name || store.name);
   const latitude = body.latitude === undefined ? store.latitude : coordinateOrNull(body.latitude, -90, 90);
   const longitude = body.longitude === undefined ? store.longitude : coordinateOrNull(body.longitude, -180, 180);
+  const themeUpdate = await storeThemeAssignments(body, store);
   await query(`
     UPDATE stores
     SET
@@ -5652,10 +5715,7 @@ async function updateStore(vendorId, body) {
       parish = :parish,
       latitude = :latitude,
       longitude = :longitude,
-      theme_key = :themeKey,
-      theme_primary_color = :themePrimaryColor,
-      theme_accent_color = :themeAccentColor,
-      theme_background_color = :themeBackgroundColor,
+      ${themeUpdate.assignments.length ? `${themeUpdate.assignments.join(',\n      ')},` : ''}
       status = :status
     WHERE id = :storeId
   `, {
@@ -5669,10 +5729,7 @@ async function updateStore(vendorId, body) {
     parish: body.parish ?? store.parish ?? null,
     latitude,
     longitude,
-    themeKey: storeThemeKey(body.themeKey ?? store.themeKey),
-    themePrimaryColor: storeThemeColor(body.themePrimaryColor ?? store.themePrimaryColor),
-    themeAccentColor: storeThemeColor(body.themeAccentColor ?? store.themeAccentColor),
-    themeBackgroundColor: storeThemeColor(body.themeBackgroundColor ?? store.themeBackgroundColor),
+    ...themeUpdate.params,
     status: ['draft', 'active', 'paused', 'suspended'].includes(body.status) ? body.status : store.status
   });
   return await storeByVendorId(vendorId);

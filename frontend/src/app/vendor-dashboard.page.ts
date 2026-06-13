@@ -20,6 +20,10 @@ interface VendorStore {
   parish?: string;
   latitude?: number | string | null;
   longitude?: number | string | null;
+  themeKey?: string;
+  themePrimaryColor?: string | null;
+  themeAccentColor?: string | null;
+  themeBackgroundColor?: string | null;
   status: string;
 }
 
@@ -585,6 +589,18 @@ interface CustomizationPresetConfig {
                     <label>Store name <input name="storeName" [(ngModel)]="storeForm.name" required></label>
                     <label>Public URL slug <input name="storeSlug" [(ngModel)]="storeForm.slug" required></label>
                     <label>Status <select name="storeStatus" [(ngModel)]="storeForm.status"><option>draft</option><option>active</option><option>paused</option></select></label>
+                    <label>Store theme
+                      <select name="storeTheme" [(ngModel)]="storeForm.themeKey">
+                        @for (theme of storeThemeOptions; track theme.value) {
+                          <option [value]="theme.value">{{ theme.label }}</option>
+                        }
+                      </select>
+                    </label>
+                    <div class="form-grid compact-form theme-color-grid">
+                      <label>Primary color <input name="themePrimaryColor" type="color" [(ngModel)]="storeForm.themePrimaryColor"></label>
+                      <label>Accent color <input name="themeAccentColor" type="color" [(ngModel)]="storeForm.themeAccentColor"></label>
+                      <label>Hero background <input name="themeBackgroundColor" type="color" [(ngModel)]="storeForm.themeBackgroundColor"></label>
+                    </div>
                     <label>Summary <textarea name="storeSummary" [(ngModel)]="storeForm.summary" rows="4" placeholder="Tell customers what your store offers"></textarea></label>
                   </div>
 
@@ -1472,7 +1488,13 @@ export class VendorDashboardPage implements OnInit {
     return requests.find((request: any) => request.id === selectedId) ?? requests[0] ?? null;
   });
 
-  protected storeForm = { name: '', slug: '', location: '', addressLine1: '', addressLine2: '', parish: '', latitude: null as number | null, longitude: null as number | null, status: 'draft', summary: '' };
+  protected readonly storeThemeOptions = [
+    { value: 'street', label: 'Street market' },
+    { value: 'island', label: 'Island bright' },
+    { value: 'night', label: 'Night market' },
+    { value: 'fresh', label: 'Fresh provisions' }
+  ];
+  protected storeForm = { name: '', slug: '', location: '', addressLine1: '', addressLine2: '', parish: '', latitude: null as number | null, longitude: null as number | null, themeKey: 'street', themePrimaryColor: '#c0552a', themeAccentColor: '#d4a93a', themeBackgroundColor: '#f1e0b5', status: 'draft', summary: '' };
   protected listingForm = { type: 'product', name: '', price: null as number | null, stockQuantity: null as number | null, deliveryDay: '', status: 'draft', description: '' };
   protected editingProductId = '';
   protected productEditForm = { type: 'product', name: '', price: null as number | null, stockQuantity: null as number | null, deliveryDay: '', status: 'draft', description: '' };
@@ -1550,6 +1572,10 @@ export class VendorDashboardPage implements OnInit {
         parish: store.parish || '',
         latitude: store.latitude === null || store.latitude === undefined ? null : Number(store.latitude),
         longitude: store.longitude === null || store.longitude === undefined ? null : Number(store.longitude),
+        themeKey: store.themeKey || 'street',
+        themePrimaryColor: store.themePrimaryColor || '#c0552a',
+        themeAccentColor: store.themeAccentColor || '#d4a93a',
+        themeBackgroundColor: store.themeBackgroundColor || '#f1e0b5',
         status: store.status,
         summary: store.summary
       };

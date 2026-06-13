@@ -31,7 +31,7 @@ interface CustomerAddress {
   selector: 'app-vendor-store-page',
   imports: [RouterLink],
   template: `
-    <main>
+    <main [class]="storePageClass()" [style.--terracotta]="storeThemePrimaryColor()" [style.--terracotta-deep]="storeThemePrimaryColor()" [style.--ochre]="storeThemeAccentColor()" [style.--mustard]="storeThemeAccentColor()" [style.--store-hero-a]="storeThemeBackgroundColor()">
       @if (vendor(); as store) {
         <section class="page-hero store-hero" [class.has-store-banner]="storeHeroImage(store)" [style.background-image]="storeHeroBackground(store)">
           <div class="container page-header">
@@ -250,6 +250,22 @@ export class VendorStorePage implements OnInit {
     const store = this.vendor();
     return store ? this.market.productsForVendor(store.id) : [];
   });
+
+  protected storePageClass(): string {
+    return `store-theme-${this.vendor()?.themeKey || 'street'}`;
+  }
+
+  protected storeThemePrimaryColor(): string | null {
+    return this.vendor()?.themePrimaryColor || null;
+  }
+
+  protected storeThemeAccentColor(): string | null {
+    return this.vendor()?.themeAccentColor || null;
+  }
+
+  protected storeThemeBackgroundColor(): string | null {
+    return this.vendor()?.themeBackgroundColor || null;
+  }
 
   protected storeUrl(): string {
     const slug = this.vendor()?.slug ?? '';

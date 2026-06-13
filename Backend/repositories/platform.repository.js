@@ -345,6 +345,16 @@ function normalizeStoreType(value) {
   return ['products', 'services', 'foods', 'mixed'].includes(normalized) ? normalized : 'products';
 }
 
+function storeThemeKey(value) {
+  const normalized = String(value || 'street').toLowerCase();
+  return ['street', 'island', 'night', 'fresh'].includes(normalized) ? normalized : 'street';
+}
+
+function storeThemeColor(value) {
+  const text = String(value || '').trim();
+  return /^#[0-9a-f]{6}$/i.test(text) ? text.toLowerCase() : null;
+}
+
 function storeTypeLabel(value) {
   return {
     foods: 'Foods',
@@ -1003,6 +1013,10 @@ async function listVendors(activeOnly = true, registeredOnly = false) {
       st.parish,
       st.latitude,
       st.longitude,
+      st.theme_key AS themeKey,
+      st.theme_primary_color AS themePrimaryColor,
+      st.theme_accent_color AS themeAccentColor,
+      st.theme_background_color AS themeBackgroundColor,
       st.rating,
       st.summary,
       store_media_primary.logoUrl,
@@ -1044,6 +1058,10 @@ async function listVendors(activeOnly = true, registeredOnly = false) {
     bannerUrl: row.bannerUrl || null,
     galleryMedia: asJsonArray(row.galleryMedia).sort((a, b) => Number(a.sortOrder || 0) - Number(b.sortOrder || 0)),
     socialLinks: asJsonArray(row.socialLinks).sort((a, b) => Number(a.sortOrder || 0) - Number(b.sortOrder || 0)),
+    themeKey: row.themeKey || 'street',
+    themePrimaryColor: row.themePrimaryColor || null,
+    themeAccentColor: row.themeAccentColor || null,
+    themeBackgroundColor: row.themeBackgroundColor || null,
     subscriptionStatus: row.subscriptionStatus || 'trial',
     subscriptionPlanCode: row.subscriptionPlanCode || 'starter',
     subscriptionPlan: row.subscriptionPlan || 'Starter vendor'
@@ -1075,6 +1093,10 @@ async function listProducts() {
       v.business_name AS vendorName,
       st.slug AS storeSlug,
       st.name AS storeName,
+      st.theme_key AS storeTheme,
+      st.theme_primary_color AS storeThemePrimaryColor,
+      st.theme_accent_color AS storeThemeAccentColor,
+      st.theme_background_color AS storeThemeBackgroundColor,
       p.type AS category,
       p.price_jmd AS price,
       p.stock_quantity AS stockQuantity,
@@ -1135,6 +1157,10 @@ async function findPublicProductById(productId) {
       v.business_name AS vendorName,
       st.slug AS storeSlug,
       st.name AS storeName,
+      st.theme_key AS storeTheme,
+      st.theme_primary_color AS storeThemePrimaryColor,
+      st.theme_accent_color AS storeThemeAccentColor,
+      st.theme_background_color AS storeThemeBackgroundColor,
       p.type AS category,
       p.price_jmd AS price,
       p.stock_quantity AS stockQuantity,
@@ -5345,6 +5371,10 @@ async function storeByVendorId(vendorId) {
       parish,
       latitude,
       longitude,
+      theme_key AS themeKey,
+      theme_primary_color AS themePrimaryColor,
+      theme_accent_color AS themeAccentColor,
+      theme_background_color AS themeBackgroundColor,
       status,
       rating,
       share_token AS shareToken
@@ -5622,6 +5652,10 @@ async function updateStore(vendorId, body) {
       parish = :parish,
       latitude = :latitude,
       longitude = :longitude,
+      theme_key = :themeKey,
+      theme_primary_color = :themePrimaryColor,
+      theme_accent_color = :themeAccentColor,
+      theme_background_color = :themeBackgroundColor,
       status = :status
     WHERE id = :storeId
   `, {
@@ -5635,6 +5669,10 @@ async function updateStore(vendorId, body) {
     parish: body.parish ?? store.parish ?? null,
     latitude,
     longitude,
+    themeKey: storeThemeKey(body.themeKey ?? store.themeKey),
+    themePrimaryColor: storeThemeColor(body.themePrimaryColor ?? store.themePrimaryColor),
+    themeAccentColor: storeThemeColor(body.themeAccentColor ?? store.themeAccentColor),
+    themeBackgroundColor: storeThemeColor(body.themeBackgroundColor ?? store.themeBackgroundColor),
     status: ['draft', 'active', 'paused', 'suspended'].includes(body.status) ? body.status : store.status
   });
   return await storeByVendorId(vendorId);

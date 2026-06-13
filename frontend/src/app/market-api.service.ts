@@ -152,6 +152,10 @@ export class MarketApiService {
         .filter((link) => link?.url && link.status !== 'hidden')
         .map((link) => ({ ...link, sortOrder: Number(link.sortOrder || 0) }))
         .sort((a, b) => Number(a.sortOrder || 0) - Number(b.sortOrder || 0)),
+      themeKey: this.storeThemeKey(vendor.themeKey),
+      themePrimaryColor: this.colorValue(vendor.themePrimaryColor),
+      themeAccentColor: this.colorValue(vendor.themeAccentColor),
+      themeBackgroundColor: this.colorValue(vendor.themeBackgroundColor),
       storeType: vendor.storeType || 'products',
       categories: vendor.categories?.length ? vendor.categories : ['Marketplace']
     };
@@ -196,6 +200,10 @@ export class MarketApiService {
       stockQuantity: Number(product.stockQuantity ?? 0),
       imageUrl: this.mediaUrl(product.imageUrl) || images[0]?.url || '',
       images,
+      storeTheme: this.storeThemeKey(product.storeTheme),
+      storeThemePrimaryColor: this.colorValue(product.storeThemePrimaryColor),
+      storeThemeAccentColor: this.colorValue(product.storeThemeAccentColor),
+      storeThemeBackgroundColor: this.colorValue(product.storeThemeBackgroundColor),
       isCustomizable: Boolean(product.isCustomizable || customizationTemplate?.fields?.length),
       customizationTemplate
     };
@@ -283,7 +291,11 @@ export class MarketApiService {
         vendorName: product.vendorName || vendor.name,
         vendorSlug: product.vendorSlug || product.storeSlug || vendor.slug,
         storeSlug: product.storeSlug || vendor.slug,
-        storeName: product.storeName || vendor.name
+        storeName: product.storeName || vendor.name,
+        storeTheme: product.storeTheme || vendor.themeKey || 'street',
+        storeThemePrimaryColor: product.storeThemePrimaryColor || vendor.themePrimaryColor || null,
+        storeThemeAccentColor: product.storeThemeAccentColor || vendor.themeAccentColor || null,
+        storeThemeBackgroundColor: product.storeThemeBackgroundColor || vendor.themeBackgroundColor || null
       }] : [];
     });
   }
@@ -318,6 +330,16 @@ export class MarketApiService {
 
   private slugFor(value: string): string {
     return String(value || 'store').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || `store-${Date.now()}`;
+  }
+
+  private storeThemeKey(value?: string): string {
+    const theme = String(value || 'street').toLowerCase();
+    return ['street', 'island', 'night', 'fresh'].includes(theme) ? theme : 'street';
+  }
+
+  private colorValue(value?: string | null): string | null {
+    const text = String(value || '').trim();
+    return /^#[0-9a-f]{6}$/i.test(text) ? text : null;
   }
 
   private firstMediaUrl(items: Array<{ url?: string; mediaType?: string; altText?: string }>, type: string): string {

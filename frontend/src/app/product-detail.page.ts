@@ -19,7 +19,7 @@ interface CustomerCustomizationImage {
   selector: 'app-product-detail-page',
   imports: [FormsModule, RouterLink],
   template: `
-    <main>
+    <main [class]="productPageClass()" [style.--terracotta]="storeThemePrimaryColor()" [style.--terracotta-deep]="storeThemePrimaryColor()" [style.--ochre]="storeThemeAccentColor()" [style.--mustard]="storeThemeAccentColor()" [style.--store-hero-a]="storeThemeBackgroundColor()">
       @if (product(); as item) {
         <section class="container section product-detail-shell">
           <nav class="breadcrumb-row" aria-label="Product path">
@@ -286,6 +286,27 @@ export class ProductDetailPage implements OnInit {
   protected storeSlug(): string {
     const item = this.product();
     return item?.storeSlug || item?.vendorSlug || this.route.snapshot.paramMap.get('slug') || '';
+  }
+
+  protected productPageClass(): string {
+    const item = this.product();
+    const storeTheme = item?.storeTheme || this.market.vendorById(item?.vendorId || '')?.themeKey || 'street';
+    return `store-theme-${storeTheme}`;
+  }
+
+  protected storeThemePrimaryColor(): string | null {
+    const item = this.product();
+    return item?.storeThemePrimaryColor || this.market.vendorById(item?.vendorId || '')?.themePrimaryColor || null;
+  }
+
+  protected storeThemeAccentColor(): string | null {
+    const item = this.product();
+    return item?.storeThemeAccentColor || this.market.vendorById(item?.vendorId || '')?.themeAccentColor || null;
+  }
+
+  protected storeThemeBackgroundColor(): string | null {
+    const item = this.product();
+    return item?.storeThemeBackgroundColor || this.market.vendorById(item?.vendorId || '')?.themeBackgroundColor || null;
   }
 
   protected stockLabel(item: Product): string {

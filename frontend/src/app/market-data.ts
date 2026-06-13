@@ -51,6 +51,10 @@ export interface Vendor {
   bannerUrl?: string | null;
   galleryMedia?: StoreGalleryMedia[];
   socialLinks?: StoreSocialLink[];
+  themeKey?: string;
+  themePrimaryColor?: string | null;
+  themeAccentColor?: string | null;
+  themeBackgroundColor?: string | null;
   categories: string[];
   storeType?: 'products' | 'services' | 'foods' | 'mixed' | string;
   status?: 'active' | 'disabled' | 'pending';
@@ -159,6 +163,10 @@ export interface Product {
   storeId?: string;
   storeSlug?: string;
   storeName?: string;
+  storeTheme?: string;
+  storeThemePrimaryColor?: string | null;
+  storeThemeAccentColor?: string | null;
+  storeThemeBackgroundColor?: string | null;
   category: string;
   price: number;
   originalPrice?: number;

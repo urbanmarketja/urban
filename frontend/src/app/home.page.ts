@@ -11,29 +11,30 @@ import { discountLabelFor, formatCurrency, hasDiscountPrice } from './market-dat
     <main>
       <section class="hero-section container">
         <div class="hero-copy">
-          <p class="eyebrow">Urban Market JA</p>
-          <h1>Shop, sell, book, and deliver across Jamaica.</h1>
-          <p class="hero-text">A practical marketplace for local products, food vendors, service providers, jobs, storefronts, orders, invoices, and vendor payouts.</p>
+          <p class="eyebrow">The Market Square // Kingston · Mobay · Ochi</p>
+          <h1>Street-side commerce, <em>built local</em>.</h1>
+          <p class="hero-text">Shop products, book services, taste island foods, and manage every order from one marketplace built for Jamaica's independent vendors and crews.</p>
           <div class="hero-actions">
-            <a class="button primary-button" routerLink="/marketplace">Browse marketplace</a>
-            <a class="button secondary-button" routerLink="/signup">Open a vendor account</a>
+            <a class="button primary-button" routerLink="/marketplace">Browse the market</a>
+            <a class="button secondary-button" routerLink="/signup">Open a vendor stall</a>
           </div>
         </div>
         <div class="hero-summary-cards commerce-stack">
           <article class="hero-store-card">
-            <span class="product-tag">Marketplace live</span>
-            <h2>Urban Market JA</h2>
-            <p>One storefront system for customers, vendors, admins, subscriptions, Market Credits, and order fulfillment.</p>
+            <span class="product-tag">Live · Marketplace</span>
+            <h2>One Market<br>One Square</h2>
+            <p>Products, foods, services, jobs, vendor wallets, and storefront sharing — running in one operating system.</p>
           </article>
           <article><strong>{{ vendors().length }}+</strong><span>Featured vendor stores</span></article>
-          <article><strong>24/7</strong><span>Cart, alerts, invoices, and dashboards</span></article>
+          <article><strong>24/7</strong><span>Cart · Alerts · Invoices · Dashboards</span></article>
         </div>
       </section>
 
       <section class="container section category-tiles">
         <div class="section-heading">
-          <h2>Start here</h2>
-          <p>Move straight into shopping, booking, food ordering, or job opportunities.</p>
+          <p class="eyebrow">Pick your lane</p>
+          <h2>Entry points</h2>
+          <p>Choose your door into Urban Market JA.</p>
         </div>
         <div class="tiles-grid">
           <a routerLink="/marketplace" class="tile-card tile-market">
@@ -61,6 +62,7 @@ import { discountLabelFor, formatCurrency, hasDiscountPrice } from './market-dat
 
       <section class="container section">
         <div class="section-heading">
+          <p class="eyebrow">Hand-picked</p>
           <h2>Featured products</h2>
           <p>Every product links back to its vendor storefront.</p>
         </div>

@@ -25,8 +25,9 @@ import { JobListing } from './market-data';
             <label>Employer <input name="employer" [(ngModel)]="job.employer" required></label>
             <label>Category <select name="category" [(ngModel)]="job.category"><option>Delivery</option><option>Retail</option><option>Digital Services</option><option>Hospitality</option><option>Home Services</option><option>Other</option></select></label>
             <label>Location <input name="location" [(ngModel)]="job.location" required></label>
-            <label>Job type <select name="type" [(ngModel)]="job.type"><option>Full-time</option><option>Part-time</option><option>Contract</option><option>One-time Gig</option></select></label>
-            <label>Salary / pay rate <input name="salary" type="number" [(ngModel)]="job.salary" placeholder="Enter amount in JMD" required></label>
+            <label>Job type <select name="type" [(ngModel)]="job.type"><option>Full-time</option><option>Part-time</option><option>Contract</option><option>Temporary</option><option>Internship</option><option>Remote</option><option>One-time Gig</option></select></label>
+            <label>Minimum salary / pay <input name="salaryMin" type="number" min="0" [(ngModel)]="job.salaryMin" placeholder="Minimum amount in JMD" required></label>
+            <label>Maximum salary / pay <input name="salaryMax" type="number" min="0" [(ngModel)]="job.salaryMax" placeholder="Maximum amount in JMD" required></label>
             <label>Deadline <input name="deadline" type="date" [(ngModel)]="job.deadline" required></label>
             <label>Contact <input name="contact" [(ngModel)]="job.contact" required></label>
           </div>
@@ -56,13 +57,14 @@ export class PostJobPage {
   protected readonly isError = signal(false);
   protected readonly isSaving = signal(false);
 
-  protected job: Omit<JobListing, 'salary'> & { salary: number | null } = {
+  protected job: Omit<JobListing, 'salary' | 'salaryMin' | 'salaryMax'> & { salaryMin: number | null; salaryMax: number | null } = {
     id: `jm${Date.now()}`,
     title: '',
     employer: '',
     category: 'Delivery',
     location: '',
-    salary: null,
+    salaryMin: null,
+    salaryMax: null,
     type: 'Full-time',
     postedAt: new Date().toISOString().split('T')[0],
     deadline: '',
@@ -75,9 +77,13 @@ export class PostJobPage {
   };
 
   protected async save(status: 'Draft' | 'Published'): Promise<void> {
+    const salaryMin = Number(this.job.salaryMin) || 0;
+    const salaryMax = Math.max(salaryMin, Number(this.job.salaryMax) || salaryMin);
     const savedJob: JobListing = {
       ...this.job,
-      salary: Number(this.job.salary) || 0,
+      salary: salaryMin,
+      salaryMin,
+      salaryMax,
       status,
       isApproved: false,
       responsibilities: this.responsibilitiesText.split('\n').map((item) => item.trim()).filter(Boolean),

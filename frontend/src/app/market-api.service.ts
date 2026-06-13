@@ -118,6 +118,18 @@ export class MarketApiService {
   }
 
   private normalizeVendor(vendor: Vendor): Vendor {
+    const normalizedMedia = (vendor.galleryMedia || [])
+      .filter((media) => media?.url)
+      .map((media) => ({
+        ...media,
+        url: this.mediaUrl(media.url),
+        mediaType: media.mediaType,
+        sortOrder: Number(media.sortOrder || 0)
+      }))
+      .sort((a, b) => Number(a.sortOrder || 0) - Number(b.sortOrder || 0));
+    const logoUrl = this.mediaUrl(vendor.logoUrl || '') || this.firstMediaUrl(normalizedMedia, 'logo');
+    const bannerUrl = this.mediaUrl(vendor.bannerUrl || '') || this.firstMediaUrl(normalizedMedia, 'banner');
+
     return {
       ...vendor,
       slug: vendor.slug || this.slugFor(vendor.name),
@@ -133,12 +145,9 @@ export class MarketApiService {
       registrationStatus: vendor.registrationStatus || 'unregistered',
       subscriptionStatus: vendor.subscriptionStatus || 'trial',
       subscriptionPlan: vendor.subscriptionPlan || 'Starter vendor',
-      logoUrl: this.mediaUrl(vendor.logoUrl || ''),
-      bannerUrl: this.mediaUrl(vendor.bannerUrl || ''),
-      galleryMedia: (vendor.galleryMedia || [])
-        .filter((media) => media?.url)
-        .map((media) => ({ ...media, url: this.mediaUrl(media.url), sortOrder: Number(media.sortOrder || 0) }))
-        .sort((a, b) => Number(a.sortOrder || 0) - Number(b.sortOrder || 0)),
+      logoUrl,
+      bannerUrl,
+      galleryMedia: normalizedMedia.filter((media) => this.isGalleryMedia(media, logoUrl, bannerUrl)),
       socialLinks: (vendor.socialLinks || [])
         .filter((link) => link?.url && link.status !== 'hidden')
         .map((link) => ({ ...link, sortOrder: Number(link.sortOrder || 0) }))
@@ -249,9 +258,14 @@ export class MarketApiService {
 
   private normalizeJob(job: JobListing): JobListing {
     const status = job.status || (job.isApproved ? 'published' : 'pending_approval');
+    const salary = Number(job.salary || 0);
+    const salaryMin = Number(job.salaryMin ?? salary);
+    const salaryMax = Number(job.salaryMax ?? salaryMin);
     return {
       ...job,
-      salary: Number(job.salary || 0),
+      salary,
+      salaryMin,
+      salaryMax: Math.max(salaryMin, salaryMax),
       responsibilities: Array.isArray(job.responsibilities) ? job.responsibilities : [],
       requirements: Array.isArray(job.requirements) ? job.requirements : [],
       postedAt: job.postedAt || new Date().toISOString(),
@@ -304,6 +318,24 @@ export class MarketApiService {
 
   private slugFor(value: string): string {
     return String(value || 'store').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || `store-${Date.now()}`;
+  }
+
+  private firstMediaUrl(items: Array<{ url?: string; mediaType?: string; altText?: string }>, type: string): string {
+    return items.find((media) => this.mediaKind(media) === type)?.url || '';
+  }
+
+  private isGalleryMedia(media: { url?: string; mediaType?: string; altText?: string }, logoUrl?: string | null, bannerUrl?: string | null): boolean {
+    if (!media.url || media.url === logoUrl || media.url === bannerUrl) return false;
+    return this.mediaKind(media) === 'gallery';
+  }
+
+  private mediaKind(media: { mediaType?: string; altText?: string }): string {
+    const explicit = String(media.mediaType || '').trim().toLowerCase();
+    if (explicit) return explicit;
+    const altText = String(media.altText || '').toLowerCase();
+    if (/\blogo\b/.test(altText)) return 'logo';
+    if (/\bbanner\b|\bcover\b|\bhero\b/.test(altText)) return 'banner';
+    return 'gallery';
   }
 
   private mediaUrl(value?: string): string {

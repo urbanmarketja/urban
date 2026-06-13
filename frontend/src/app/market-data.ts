@@ -24,6 +24,7 @@ export interface StoreGalleryMedia {
   id?: string;
   url: string;
   altText?: string;
+  mediaType?: 'logo' | 'banner' | 'gallery' | string;
   sortOrder?: number;
 }
 
@@ -242,6 +243,8 @@ export interface JobListing {
   category: string;
   location: string;
   salary: number;
+  salaryMin?: number;
+  salaryMax?: number;
   type: string;
   postedAt: string;
   deadline: string;

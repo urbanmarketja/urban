@@ -110,9 +110,14 @@ export class JobService {
 
   private normalizeJob(job: JobListing): JobListing {
     const status = job.status || (job.isApproved ? 'published' : 'pending_approval');
+    const salary = Number(job.salary || 0);
+    const salaryMin = Number(job.salaryMin ?? salary);
+    const salaryMax = Number(job.salaryMax ?? salaryMin);
     return {
       ...job,
-      salary: Number(job.salary || 0),
+      salary,
+      salaryMin,
+      salaryMax: Math.max(salaryMin, salaryMax),
       responsibilities: Array.isArray(job.responsibilities) ? job.responsibilities : [],
       requirements: Array.isArray(job.requirements) ? job.requirements : [],
       postedAt: job.postedAt || new Date().toISOString(),

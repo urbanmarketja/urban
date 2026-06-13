@@ -4,7 +4,7 @@ import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import { apiUrl } from './api-url';
 import { AuthService } from './auth.service';
 import { JobService } from './job.service';
-import { formatCurrency } from './market-data';
+import { JobListing, formatCurrency } from './market-data';
 
 @Component({
   selector: 'app-job-detail-page',
@@ -25,7 +25,7 @@ import { formatCurrency } from './market-data';
             <div class="job-meta-row">
               <div><strong>{{ item.employer }}</strong><p>Employer</p></div>
               <div><strong>{{ item.location }}</strong><p>Location</p></div>
-              <div><strong>{{ money(item.salary) }}</strong><p>Pay rate</p></div>
+              <div><strong>{{ salaryLabel(item) }}</strong><p>Pay range</p></div>
               <div><strong>{{ item.type }}</strong><p>Type</p></div>
             </div>
             <h2>Responsibilities</h2>
@@ -191,6 +191,12 @@ export class JobDetailPage implements OnInit {
 
   protected dateLabel(value: string): string {
     return new Date(value).toLocaleDateString();
+  }
+
+  protected salaryLabel(job: JobListing): string {
+    const min = Number(job.salaryMin ?? job.salary ?? 0);
+    const max = Number(job.salaryMax ?? min);
+    return max > min ? `${this.money(min)} - ${this.money(max)}` : this.money(min);
   }
 
   protected resumeSizeLabel(): string {

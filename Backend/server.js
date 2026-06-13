@@ -108,9 +108,9 @@ const foods = [
 ];
 
 const jobs = [
-  { id: 'jm001', vendorId: null, title: 'Marketplace Delivery Coordinator', employer: 'Island Logistics', category: 'Delivery', location: 'Kingston', salary: 2400, type: 'Full-time', postedAt: '2026-04-10', deadline: '2026-05-05', description: 'Coordinate delivery teams, manage routes, and ensure on-time pickup for marketplace orders.', responsibilities: ['Plan delivery routes', 'Communicate with vendors and drivers', 'Track performance and delivery time'], requirements: ['Excellent communication skills', 'Experience with local logistics', 'Ability to work with scheduling tools'], contact: 'jobs@islandlogistics.jm', isApproved: true, status: 'Published' },
-  { id: 'jm002', vendorId: 'v2', title: 'Freelance Website Builder', employer: 'Market Glow', category: 'Digital Services', location: 'Remote', salary: 1800, type: 'Contract', postedAt: '2026-04-12', deadline: '2026-05-01', description: 'Build landing pages and e-commerce storefronts for local vendors using simple responsive design.', responsibilities: ['Develop websites', 'Collect vendor assets', 'Deploy finished pages'], requirements: ['Web development experience', 'Responsive design skills', 'Basic SEO knowledge'], contact: 'talent@marketglow.jm', isApproved: true, status: 'Published' },
-  { id: 'jm003', vendorId: 'v1', title: 'Event Catering Assistant', employer: 'Island Eats', category: 'Hospitality', location: 'Portmore', salary: 1200, type: 'Part-time', postedAt: '2026-04-14', deadline: '2026-04-28', description: 'Support catering events with food prep, delivery setup, and customer service during meals.', responsibilities: ['Prepare food packages', 'Assist at event sites', 'Communicate with customers and vendors'], requirements: ['Friendly customer service', 'Weekend availability', 'Food handling experience preferred'], contact: 'careers@islandeats.jm', isApproved: true, status: 'Published' }
+  { id: 'jm001', vendorId: null, title: 'Marketplace Delivery Coordinator', employer: 'Island Logistics', category: 'Delivery', location: 'Kingston', salary: 2400, salaryMin: 2400, salaryMax: 3200, type: 'Full-time', postedAt: '2026-04-10', deadline: '2026-05-05', description: 'Coordinate delivery teams, manage routes, and ensure on-time pickup for marketplace orders.', responsibilities: ['Plan delivery routes', 'Communicate with vendors and drivers', 'Track performance and delivery time'], requirements: ['Excellent communication skills', 'Experience with local logistics', 'Ability to work with scheduling tools'], contact: 'jobs@islandlogistics.jm', isApproved: true, status: 'Published' },
+  { id: 'jm002', vendorId: 'v2', title: 'Freelance Website Builder', employer: 'Market Glow', category: 'Digital Services', location: 'Remote', salary: 1800, salaryMin: 1800, salaryMax: 3000, type: 'Contract', postedAt: '2026-04-12', deadline: '2026-05-01', description: 'Build landing pages and e-commerce storefronts for local vendors using simple responsive design.', responsibilities: ['Develop websites', 'Collect vendor assets', 'Deploy finished pages'], requirements: ['Web development experience', 'Responsive design skills', 'Basic SEO knowledge'], contact: 'talent@marketglow.jm', isApproved: true, status: 'Published' },
+  { id: 'jm003', vendorId: 'v1', title: 'Event Catering Assistant', employer: 'Island Eats', category: 'Hospitality', location: 'Portmore', salary: 1200, salaryMin: 1200, salaryMax: 1800, type: 'Part-time', postedAt: '2026-04-14', deadline: '2026-04-28', description: 'Support catering events with food prep, delivery setup, and customer service during meals.', responsibilities: ['Prepare food packages', 'Assist at event sites', 'Communicate with customers and vendors'], requirements: ['Friendly customer service', 'Weekend availability', 'Food handling experience preferred'], contact: 'careers@islandeats.jm', isApproved: true, status: 'Published' }
 ];
 
 const orders = [];
@@ -2574,7 +2574,9 @@ const server = http.createServer(async (req, res) => {
           employer: String(body.employer),
           category: String(body.category || 'Other'),
           location: String(body.location),
-          salary: Number(body.salary) || 0,
+          salary: Number(body.salaryMin ?? body.salary) || 0,
+          salaryMin: Number(body.salaryMin ?? body.salary) || 0,
+          salaryMax: Math.max(Number(body.salaryMin ?? body.salary) || 0, Number(body.salaryMax ?? body.salaryMin ?? body.salary) || 0),
           type: String(body.type || 'Contract'),
           postedAt: new Date().toISOString().split('T')[0],
           deadline: String(body.deadline || ''),

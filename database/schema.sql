@@ -702,6 +702,8 @@ CREATE TABLE IF NOT EXISTS jobs (
   category VARCHAR(120) NOT NULL,
   location VARCHAR(180) NOT NULL,
   salary_jmd INT NOT NULL DEFAULT 0,
+  salary_min_jmd INT NOT NULL DEFAULT 0,
+  salary_max_jmd INT NOT NULL DEFAULT 0,
   job_type VARCHAR(80) NOT NULL,
   description TEXT NOT NULL,
   responsibilities JSON,

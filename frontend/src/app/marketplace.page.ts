@@ -3,7 +3,7 @@ import { FormsModule } from '@angular/forms';
 import { RouterLink } from '@angular/router';
 import { CartService } from './cart.service';
 import { MarketApiService } from './market-api.service';
-import { discountLabelFor, formatCurrency, hasDiscountPrice } from './market-data';
+import { Vendor, discountLabelFor, formatCurrency, hasDiscountPrice } from './market-data';
 
 type MarketFilter = 'all' | 'products' | 'foods' | 'services';
 
@@ -28,7 +28,13 @@ type MarketFilter = 'all' | 'products' | 'foods' | 'services';
         <div class="vendor-grid">
           @for (vendor of vendors(); track vendor.id) {
             <article class="vendor-card">
-              <div class="vendor-banner"><span class="visual-icon">Store</span>{{ vendor.categories.join(' + ') }}</div>
+              <div class="vendor-banner" [class.has-photo]="vendorImage(vendor)">
+                @if (vendorImage(vendor)) {
+                  <img [src]="vendorImage(vendor)" [alt]="vendor.name + ' storefront image'" loading="lazy" decoding="async">
+                } @else {
+                  <span class="visual-icon">Store</span>{{ vendor.categories.join(' + ') }}
+                }
+              </div>
               <h3>{{ vendor.name }}</h3>
               <p class="vendor-meta">{{ vendor.rating }} star · {{ vendor.location }} · {{ vendor.deliveryDays.join(' / ') }}</p>
               <p>{{ vendor.summary }}</p>
@@ -238,6 +244,10 @@ export class MarketplacePage implements OnInit {
 
   protected labelFor(category: string): string {
     return category === 'Beauty' ? 'Beauty' : category === 'Food' ? 'Food' : 'Goods';
+  }
+
+  protected vendorImage(vendor: Vendor): string {
+    return vendor.bannerUrl || vendor.galleryMedia?.[0]?.url || vendor.logoUrl || '';
   }
 
   private matchesSearch(fields: Array<string | number | undefined>): boolean {

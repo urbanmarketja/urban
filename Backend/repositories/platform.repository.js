@@ -1961,6 +1961,8 @@ async function listJobs(approvedOnly = true) {
       j.category,
       j.location,
       j.salary_jmd AS salary,
+      COALESCE(NULLIF(j.salary_min_jmd, 0), j.salary_jmd) AS salaryMin,
+      COALESCE(NULLIF(j.salary_max_jmd, 0), NULLIF(j.salary_min_jmd, 0), j.salary_jmd) AS salaryMax,
       j.job_type AS type,
       j.created_at AS postedAt,
       j.deadline,
@@ -1980,6 +1982,8 @@ async function listJobs(approvedOnly = true) {
   return rows.map((row) => ({
     ...row,
     salary: Number(row.salary || 0),
+    salaryMin: Number(row.salaryMin ?? row.salary ?? 0),
+    salaryMax: Number(row.salaryMax ?? row.salaryMin ?? row.salary ?? 0),
     postedAt: dateOnly(row.postedAt),
     deadline: dateOnly(row.deadline),
     responsibilities: asJsonArray(row.responsibilities),
@@ -5516,7 +5520,7 @@ async function listVendorServices(vendorIds) {
 async function listVendorJobs(vendorIds) {
   if (!vendorIds.length) return [];
   return query(`
-    SELECT id, vendor_id AS vendorId, title, employer_name AS employer, category, location, salary_jmd AS salary, job_type AS type, description, responsibilities, requirements, contact, status, deadline, created_at AS createdAt
+    SELECT id, vendor_id AS vendorId, title, employer_name AS employer, category, location, salary_jmd AS salary, COALESCE(NULLIF(salary_min_jmd, 0), salary_jmd) AS salaryMin, COALESCE(NULLIF(salary_max_jmd, 0), NULLIF(salary_min_jmd, 0), salary_jmd) AS salaryMax, job_type AS type, description, responsibilities, requirements, contact, status, deadline, created_at AS createdAt
     FROM jobs
     WHERE FIND_IN_SET(vendor_id, :vendorIds)
     ORDER BY created_at DESC
@@ -6450,8 +6454,8 @@ async function createJob(body, postedByUserId = null) {
   }
   const id = `jm${Date.now()}`;
   await query(`
-    INSERT INTO jobs (id, vendor_id, posted_by_user_id, title, employer_name, category, location, salary_jmd, job_type, description, responsibilities, requirements, contact, status, deadline)
-    VALUES (:id, :vendorId, :postedByUserId, :title, :employer, :category, :location, :salary, :type, :description, :responsibilities, :requirements, :contact, :status, :deadline)
+    INSERT INTO jobs (id, vendor_id, posted_by_user_id, title, employer_name, category, location, salary_jmd, salary_min_jmd, salary_max_jmd, job_type, description, responsibilities, requirements, contact, status, deadline)
+    VALUES (:id, :vendorId, :postedByUserId, :title, :employer, :category, :location, :salary, :salaryMin, :salaryMax, :type, :description, :responsibilities, :requirements, :contact, :status, :deadline)
   `, {
     id,
     vendorId: body.vendorId || await defaultVendorIdForUser(user.id),
@@ -6460,7 +6464,9 @@ async function createJob(body, postedByUserId = null) {
     employer: body.employer,
     category: body.category || 'Other',
     location: body.location,
-    salary: Number(body.salary) || 0,
+    salary: Number(body.salaryMin ?? body.salary) || 0,
+    salaryMin: Number(body.salaryMin ?? body.salary) || 0,
+    salaryMax: Math.max(Number(body.salaryMin ?? body.salary) || 0, Number(body.salaryMax ?? body.salaryMin ?? body.salary) || 0),
     type: body.type || 'Contract',
     description: body.description,
     responsibilities: JSON.stringify(body.responsibilities || []),
@@ -6482,7 +6488,7 @@ async function updateJob(jobId, body) {
   }
   await query(`
     UPDATE jobs
-    SET title = :title, employer_name = :employer, category = :category, location = :location, salary_jmd = :salary, job_type = :type, description = :description, responsibilities = :responsibilities, requirements = :requirements, contact = :contact, status = :status, deadline = :deadline
+    SET title = :title, employer_name = :employer, category = :category, location = :location, salary_jmd = :salary, salary_min_jmd = :salaryMin, salary_max_jmd = :salaryMax, job_type = :type, description = :description, responsibilities = :responsibilities, requirements = :requirements, contact = :contact, status = :status, deadline = :deadline
     WHERE id = :jobId
   `, {
     jobId,
@@ -6490,7 +6496,9 @@ async function updateJob(jobId, body) {
     employer: body.employer ?? job.employer_name,
     category: body.category ?? job.category,
     location: body.location ?? job.location,
-    salary: Number(body.salary ?? job.salary_jmd) || 0,
+    salary: Number(body.salaryMin ?? body.salary ?? job.salary_min_jmd ?? job.salary_jmd) || 0,
+    salaryMin: Number(body.salaryMin ?? body.salary ?? job.salary_min_jmd ?? job.salary_jmd) || 0,
+    salaryMax: Math.max(Number(body.salaryMin ?? body.salary ?? job.salary_min_jmd ?? job.salary_jmd) || 0, Number(body.salaryMax ?? job.salary_max_jmd ?? body.salaryMin ?? body.salary ?? job.salary_jmd) || 0),
     type: body.type ?? job.job_type,
     description: body.description ?? job.description,
     responsibilities: JSON.stringify(body.responsibilities || asJsonArray(job.responsibilities)),

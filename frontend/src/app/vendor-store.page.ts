@@ -33,13 +33,17 @@ interface CustomerAddress {
   template: `
     <main>
       @if (vendor(); as store) {
-        <section class="page-hero store-hero" [class.has-store-banner]="store.bannerUrl" [style.background-image]="storeHeroBackground(store)">
+        <section class="page-hero store-hero" [class.has-store-banner]="storeHeroImage(store)" [style.background-image]="storeHeroBackground(store)">
           <div class="container page-header">
-            @if (store.logoUrl) {
-              <img class="store-logo-avatar" [src]="store.logoUrl" [alt]="store.name + ' logo'">
-            }
-            <p class="eyebrow">Vendor store</p>
-            <h1>{{ store.name }}</h1>
+            <div class="store-identity-row">
+              @if (store.logoUrl) {
+                <img class="store-logo-avatar" [src]="store.logoUrl" [alt]="store.name + ' logo'">
+              }
+              <div>
+                <p class="eyebrow">Vendor store</p>
+                <h1>{{ store.name }}</h1>
+              </div>
+            </div>
             <p>{{ store.summary }}</p>
             <p class="vendor-meta">{{ store.rating }} star - {{ storeAddressLabel() }} - Delivery {{ store.deliveryDays.join(' / ') }}</p>
           </div>
@@ -153,14 +157,14 @@ interface CustomerAddress {
           </article>
         </section>
 
-        @if (store.galleryMedia?.length) {
+        @if (storeGallery(store).length) {
           <section class="container section store-gallery-section">
             <div class="section-heading">
               <h2>Store gallery</h2>
               <p>Photos shared by {{ store.name }}.</p>
             </div>
             <div class="store-gallery-grid">
-              @for (media of store.galleryMedia; track media.id || media.url) {
+              @for (media of storeGallery(store); track media.id || media.url) {
                 <figure>
                   <img [src]="media.url" [alt]="media.altText || store.name + ' store photo'" loading="lazy" decoding="async">
                 </figure>
@@ -259,9 +263,18 @@ export class VendorStorePage implements OnInit {
     return `https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${encodeURIComponent(this.storeUrl())}`;
   }
 
+  protected storeGallery(store: Vendor): NonNullable<Vendor['galleryMedia']> {
+    return (store.galleryMedia || []).filter((media) => media.url && media.url !== store.logoUrl && media.url !== store.bannerUrl);
+  }
+
+  protected storeHeroImage(store: Vendor): string {
+    return store.bannerUrl || this.storeGallery(store)[0]?.url || '';
+  }
+
   protected storeHeroBackground(store: Vendor): string | null {
-    if (!store.bannerUrl) return null;
-    return `linear-gradient(90deg, rgba(12, 28, 34, 0.88), rgba(12, 28, 34, 0.58)), url("${store.bannerUrl}")`;
+    const imageUrl = this.storeHeroImage(store);
+    if (!imageUrl) return null;
+    return `linear-gradient(90deg, rgba(28, 24, 20, 0.68), rgba(28, 24, 20, 0.28)), url("${imageUrl}")`;
   }
 
   protected daysLeft(): number {
